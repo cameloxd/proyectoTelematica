@@ -1,0 +1,174 @@
+name: dfsha
+
+# Plantilla comun de los DataNodes (ancla YAML: no se usa `extends`).
+x-datanode: &datanode
+  build:
+    context: .
+    dockerfile: datanode/Dockerfile
+  restart: unless-stopped
+  networks: [dfsha_net]
+  depends_on:
+    controlnode:
+      condition: service_healthy
+  secrets:
+    - cluster_registration_key
+    - token_public_key
+  environment: &datanode-env
+    CONTROLNODE_ENDPOINT: controlnode:50051
+    STORAGE_PATH: /data/blocks
+    # Capacidad simulada: los contenedores comparten el disco del host.
+    DATANODE_CAPACITY_BYTES: ${DATANODE_CAPACITY_BYTES:-5368709120}
+    REGISTRATION_KEY_FILE: /run/secrets/cluster_registration_key
+    TOKEN_PUBLIC_KEY_FILE: /run/secrets/token_public_key   # solo clave publica
+    LOG_FORMAT: json
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    networks: [dfsha_net]
+    environment:
+      POSTGRES_DB: dfsha
+      POSTGRES_USER: dfsha
+      POSTGRES_PASSWORD_FILE: /run/secrets/postgres_password
+    secrets:
+      - postgres_password
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./schema.sql:/docker-entrypoint-initdb.d/01-schema.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U dfsha -d dfsha"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  rabbitmq:
+    image: rabbitmq:3-management-alpine
+    networks: [dfsha_net]
+    environment:
+      RABBITMQ_DEFAULT_USER: dfsha
+      RABBITMQ_DEFAULT_PASS_FILE: /run/secrets/rabbitmq_password
+    secrets:
+      - rabbitmq_password
+    ports:
+      - "127.0.0.1:15672:15672"     # consola de administracion solo desde el host
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  controlnode:
+    build:
+      context: .
+      dockerfile: controlnode/Dockerfile
+    networks: [dfsha_net]
+    environment:
+      GRPC_PORT: "50051"
+      DB_URL: jdbc:postgresql://postgres:5432/dfsha
+      DB_USER: dfsha
+      DB_PASSWORD_FILE: /run/secrets/postgres_password
+      RABBITMQ_HOST: rabbitmq
+      RABBITMQ_USER: dfsha
+      RABBITMQ_PASSWORD_FILE: /run/secrets/rabbitmq_password
+      # Bloques
+      DFS_BLOCK_SIZE_BYTES: ${DFS_BLOCK_SIZE_BYTES:-8388608}     # 8 MiB
+      DFS_MIN_BLOCK_SIZE_BYTES: "1048576"                        # 1 MiB
+      DFS_MAX_BLOCK_SIZE_BYTES: "67108864"                       # 64 MiB
+      # Asignacion
+      RESERVED_BYTES: "268435456"          # 256 MiB que nunca se asignan
+      MAX_TRANSFERS_PER_NODE: "8"
+      TARGET_BLOCKS_PER_NODE: "1000"
+      # Estados de nodos y archivos
+      HEARTBEAT_INTERVAL_SECONDS: "5"
+      SUSPECT_AFTER_SECONDS: "15"
+      DEAD_AFTER_SECONDS: "30"
+      PENDING_FILE_TTL_SECONDS: "3600"
+      # Tokens (Ed25519)
+      ACCESS_TOKEN_TTL_SECONDS: "1800"
+      BLOCK_TOKEN_TTL_SECONDS: "900"
+      TOKEN_PRIVATE_KEY_FILE: /run/secrets/token_private_key
+      TOKEN_PUBLIC_KEY_FILE: /run/secrets/token_public_key
+      REGISTRATION_KEY_FILE: /run/secrets/cluster_registration_key
+      LOG_FORMAT: json
+    secrets:
+      - postgres_password
+      - rabbitmq_password
+      - token_private_key
+      - token_public_key
+      - cluster_registration_key
+    depends_on:
+      postgres:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+    healthcheck:
+      # Requiere bash en la imagen (las eclipse-temurin basadas en Debian/Ubuntu lo traen).
+      test: ["CMD-SHELL", "bash -c 'exec 3<>/dev/tcp/127.0.0.1/50051'"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    ports:
+      - "50051:50051"
+
+  datanode1:
+    <<: *datanode
+    environment:
+      <<: *datanode-env
+      NODE_NAME: datanode-1
+      GRPC_PORT: "50061"
+      # Endpoint que reciben los Clientes. Fuera de la maquina local,
+      # ADVERTISE_HOST debe ser la IP publica o el DNS de la VM.
+      ADVERTISED_ENDPOINT: ${ADVERTISE_HOST:-localhost}:50061
+      INTERNAL_ENDPOINT: datanode1:50061
+    ports:
+      - "50061:50061"
+    volumes:
+      - datanode1_data:/data/blocks
+
+  datanode2:
+    <<: *datanode
+    environment:
+      <<: *datanode-env
+      NODE_NAME: datanode-2
+      GRPC_PORT: "50062"
+      ADVERTISED_ENDPOINT: ${ADVERTISE_HOST:-localhost}:50062
+      INTERNAL_ENDPOINT: datanode2:50062
+    ports:
+      - "50062:50062"
+    volumes:
+      - datanode2_data:/data/blocks
+
+  datanode3:
+    <<: *datanode
+    environment:
+      <<: *datanode-env
+      NODE_NAME: datanode-3
+      GRPC_PORT: "50063"
+      ADVERTISED_ENDPOINT: ${ADVERTISE_HOST:-localhost}:50063
+      INTERNAL_ENDPOINT: datanode3:50063
+    ports:
+      - "50063:50063"
+    volumes:
+      - datanode3_data:/data/blocks
+
+networks:
+  dfsha_net:
+
+# Los archivos se generan con scripts/gen-secrets.sh (no van a Git).
+secrets:
+  postgres_password:
+    file: ./secrets/postgres_password.txt
+  rabbitmq_password:
+    file: ./secrets/rabbitmq_password.txt
+  cluster_registration_key:
+    file: ./secrets/cluster_registration_key.txt
+  token_private_key:
+    file: ./secrets/token_private.pem
+  token_public_key:
+    file: ./secrets/token_public.pem
+
+volumes:
+  postgres_data:
+  datanode1_data:
+  datanode2_data:
+  datanode3_data:
