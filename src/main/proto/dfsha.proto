@@ -1,0 +1,65 @@
+syntax = "proto3";
+
+package dfsha.v1;
+option java_multiple_files = true;
+option java_package = "co.eafit.dfsha.grpc.v1";
+
+message Empty {}
+message Status { bool ok = 1; string code = 2; string message = 3; }
+
+message LoginRequest { string username = 1; string password = 2; }
+message LoginResponse { string access_token = 1; int64 expires_at_epoch_seconds = 2; string user_id = 3; }
+
+message AllocateFileRequest { string path = 1; int64 file_size_bytes = 2; string operation_id = 3; }
+message FileRef { string file_id = 1; string path = 2; }
+message BlockPlan {
+  string block_id = 1;
+  int32 block_index = 2;
+  int64 offset_bytes = 3;
+  int64 size_bytes = 4;
+  string datanode_id = 5;
+  string datanode_endpoint = 6;
+  string write_token = 7;
+  string read_token = 8;
+  string checksum_sha256 = 9;
+  int64 token_expires_at_epoch_seconds = 10;
+}
+message AllocateFileResponse { FileRef file = 1; int64 block_size_bytes = 2; repeated BlockPlan blocks = 3; }
+message CommitFileRequest { string file_id = 1; string operation_id = 2; }
+message CommitFileResponse { Status status = 1; repeated string missing_block_ids = 2; }
+message FileManifest { FileRef file = 1; int64 file_size_bytes = 2; repeated BlockPlan blocks = 3; }
+message PathRequest { string path = 1; bool recursive = 2; }
+message DirectoryEntry { string path = 1; bool directory = 2; int64 size_bytes = 3; }
+message ListResponse { repeated DirectoryEntry entries = 1; }
+
+message WriteBlockHeader { string block_id = 1; string file_id = 2; string write_token = 3; int64 expected_size_bytes = 4; }
+message BlockChunk { oneof payload { WriteBlockHeader header = 1; bytes data = 2; } }
+message BlockWriteResponse { Status status = 1; string block_id = 2; int64 bytes_written = 3; string checksum_sha256 = 4; }
+message ReadBlockRequest { string block_id = 1; string read_token = 2; int64 offset_bytes = 3; int64 length_bytes = 4; }
+message DataChunk { bytes data = 1; int64 offset_bytes = 2; bool last = 3; }
+message DeleteBlockRequest { string block_id = 1; string delete_token = 2; }
+
+message RegisterDataNodeRequest { string node_name = 1; string advertised_endpoint = 2; string internal_endpoint = 3; int64 capacity_bytes = 4; }
+message RegisterDataNodeResponse { Status status = 1; string datanode_id = 2; string node_token = 3; }
+message Heartbeat { string datanode_id = 1; string node_token = 2; int64 capacity_bytes = 3; int64 free_bytes = 4; int32 active_transfers = 5; int64 stored_blocks = 6; }
+message ReportBlockStoredRequest { string datanode_id = 1; string node_token = 2; string block_id = 3; int64 bytes_written = 4; string checksum_sha256 = 5; }
+
+service ControlService {
+  rpc Login(LoginRequest) returns (LoginResponse);
+  rpc AllocateFile(AllocateFileRequest) returns (AllocateFileResponse);
+  rpc CommitFile(CommitFileRequest) returns (CommitFileResponse);
+  rpc GetFileManifest(FileRef) returns (FileManifest);
+  rpc ListDirectory(PathRequest) returns (ListResponse);
+  rpc CreateDirectory(PathRequest) returns (Status);
+  rpc DeletePath(PathRequest) returns (Status);
+}
+service DataNodeService {
+  rpc WriteBlock(stream BlockChunk) returns (BlockWriteResponse);
+  rpc ReadBlock(ReadBlockRequest) returns (stream DataChunk);
+  rpc DeleteBlock(DeleteBlockRequest) returns (Status);
+}
+service NodeRegistryService {
+  rpc RegisterDataNode(RegisterDataNodeRequest) returns (RegisterDataNodeResponse);
+  rpc PublishHeartbeat(Heartbeat) returns (Status);
+  rpc ReportBlockStored(ReportBlockStoredRequest) returns (Status);
+}
