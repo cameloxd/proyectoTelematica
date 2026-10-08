@@ -1,4 +1,4 @@
-package co.eafit.dfsha.client;
+package dfsha.client;
 
 import co.eafit.dfsha.common.Env;
 
