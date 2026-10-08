@@ -35,6 +35,19 @@ docker compose up postgres rabbitmq
 ```
 Consola de RabbitMQ: http://localhost:15672
 
-## Como contribuir
-Lee [CONTRIBUTING.md](CONTRIBUTING.md): ramas, commits y pull requests.
-El plan de trabajo esta en `docs/`.
+## Conectarse desde tu IDE
+
+Con `docker compose up -d postgres rabbitmq` corriendo (desde `deploy/`):
+
+| Servicio | Dirección | Usuario | Contraseña |
+|---|---|---|---|
+| PostgreSQL | `jdbc:postgresql://localhost:5432/dfsha` (usa el puerto de `POSTGRES_PORT` si lo cambiaste en `.env`) | `dfsha` | `deploy/secrets/postgres_password.txt` |
+| RabbitMQ (AMQP) | `localhost:5672` | `dfsha` | `deploy/secrets/rabbitmq_password.txt` |
+| RabbitMQ (consola) | http://localhost:15672 | `dfsha` | la misma de RabbitMQ |
+
+Las contraseñas son aleatorias en cada máquina: las genera `bash gen-secrets.sh`.
+Si `docker compose up` falla con "forbidden by its access permissions" en Windows,
+el puerto está reservado: define `POSTGRES_PORT=5433` en `deploy/.env`.
+Si cambias `schema.sql`, recrea el volumen con `docker compose down -v`.
+
+
