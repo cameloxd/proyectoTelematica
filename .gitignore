@@ -1,5 +1,20 @@
+# Secretos y entorno local
 .env
 secrets/
+
+# Build
 target/
-data/
+*.class
+
+# Datos locales de contenedores (solo en la raiz; NO ignorar paquetes Java llamados "data")
+/data/
+/deploy/data/
+
+# Logs
 *.log
+
+# IDEs y SO
+.idea/
+.vscode/
+*.iml
+.DS_Store
