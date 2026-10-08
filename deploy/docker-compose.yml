@@ -1,3 +1,8 @@
+# ATENCION (rama develop): los Dockerfiles se eliminaron en la reestructuracion.
+# Por ahora solo funciona la infraestructura:
+#     cd deploy && cp env.example .env && bash gen-secrets.sh
+#     docker compose up postgres rabbitmq
+# Los servicios controlnode y datanode1-3 se reconstruyen en la Fase 2 (tarea de Martin).
 name: dfsha
 
 # Plantilla comun de los DataNodes (ancla YAML: no se usa `extends`).
@@ -154,7 +159,7 @@ services:
 networks:
   dfsha_net:
 
-# Los archivos se generan con scripts/gen-secrets.sh (no van a Git).
+# Los archivos se generan con gen-secrets.sh (no van a Git).
 secrets:
   postgres_password:
     file: ./secrets/postgres_password.txt
