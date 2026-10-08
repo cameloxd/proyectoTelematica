@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Genera los secretos que usa docker-compose.yml. Ejecutar desde la raiz del proyecto.
+# Genera los secretos que usa docker-compose.yml. Ejecutar desde la carpeta deploy/.
 set -euo pipefail
 mkdir -p secrets
 

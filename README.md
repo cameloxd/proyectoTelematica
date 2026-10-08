@@ -1,44 +1,40 @@
-# DFSha Hito 2
+# DFSha
 
-Esta carpeta contiene el contrato gRPC, el esquema PostgreSQL y un bootstrap Java ejecutable para validar los flujos principales de Hito 2.
+Sistema de archivos distribuido basado en bloques (estilo HDFS) en Java.
+ST0263 Topicos Especiales en Telematica / SI3007 Sistemas Distribuidos - EAFIT 2026-2.
+
+Componentes: **Cliente** (CLI) - **ControlNode** (metadatos, PostgreSQL) - **DataNodes** (bloques).
+Comunicacion: gRPC en el camino de datos y control; RabbitMQ para eventos asincronos.
+
+## Estructura
+
+```text
+dfsha-proto/        contrato gRPC (dfsha.proto) -> genera los stubs Java
+dfsha-common/       codigo compartido: configuracion, gRPC, RabbitMQ, logging
+dfsha-client/       CLI del cliente
+dfsha-controlnode/  servidor de metadatos
+dfsha-datanode/     servidor de bloques
+deploy/             docker-compose, schema.sql, secretos (gen-secrets.sh)
+docs/               hitos, roadmap y referencias
+```
 
 ## Requisitos
+Java 17, Maven 3.9+, Docker con Compose v2.
 
-- Docker Desktop con Compose v2.
-- Bash y OpenSSL para generar secretos.
-- Java 17 y Maven 3.9 si se desea compilar fuera de Docker.
-
-## Arranque con Docker
-
-Desde esta carpeta:
-
+## Compilar
 ```bash
+mvn -q -DskipTests package
+```
+
+## Infraestructura local (PostgreSQL + RabbitMQ)
+```bash
+cd deploy
 cp env.example .env
 bash gen-secrets.sh
-docker compose config
-docker compose up --build
+docker compose up postgres rabbitmq
 ```
+Consola de RabbitMQ: http://localhost:15672
 
-Puertos publicados:
-
-- ControlNode: `localhost:50051`
-- DataNode 1: `localhost:50061`
-- DataNode 2: `localhost:50062`
-- DataNode 3: `localhost:50063`
-- Consola RabbitMQ: `http://localhost:15672`
-
-La implementación Java actual es un bootstrap en memoria para validar registro de DataNodes, asignación de bloques, escritura, reporte de bloques y commit. PostgreSQL y RabbitMQ ya están definidos en Compose; el siguiente paso de implementación es reemplazar los mapas en memoria por repositorios JDBC y consumidores RabbitMQ.
-
-## Compilación local
-
-```bash
-mvn -DskipTests package
-```
-
-El contrato está en `src/main/proto/dfsha.proto`. Los stubs Java se generan automáticamente durante `mvn package`.
-
-## Advertencias
-
-- El bootstrap usa `usePlaintext()` entre servicios; TLS/mTLS sigue siendo obligatorio para cerrar RNF6.
-- Los tokens del bootstrap son identificadores temporales; la firma Ed25519 debe incorporarse en el adaptador de seguridad antes de una demo fuera de localhost.
-- No se deben subir `.env` ni `secrets/` al repositorio.
+## Como contribuir
+Lee [CONTRIBUTING.md](CONTRIBUTING.md): ramas, commits y pull requests.
+El plan de trabajo esta en `docs/`.
