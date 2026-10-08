@@ -2,9 +2,17 @@
 .env
 secrets/
 
-# Build
+# Maven y compilacion
 target/
 *.class
+pom.xml.releaseBackup
+release.properties
+dependency-reduced-pom.xml
+.flattened-pom.xml
+
+# Archivos generados por la JVM
+hs_err_pid*
+replay_pid*
 
 # Datos locales de contenedores (solo en la raiz; NO ignorar paquetes Java llamados "data")
 /data/
