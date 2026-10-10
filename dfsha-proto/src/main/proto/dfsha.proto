@@ -60,6 +60,5 @@ service DataNodeService {
 }
 service NodeRegistryService {
   rpc RegisterDataNode(RegisterDataNodeRequest) returns (RegisterDataNodeResponse);
-  rpc PublishHeartbeat(Heartbeat) returns (Status);
   rpc ReportBlockStored(ReportBlockStoredRequest) returns (Status);
 }
