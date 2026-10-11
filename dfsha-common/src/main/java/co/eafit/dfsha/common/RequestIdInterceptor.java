@@ -26,6 +26,7 @@ public final class RequestIdInterceptor implements ServerInterceptor {
         Context ctx = Context.current().withValue(Ctx.REQUEST_ID, requestId);
 
         // 3. Dejamos pasar la llamada con ese Context.
-        return Contexts.interceptCall(ctx, call, headers, next);
+       return new MdcServerCallListener<>(
+        Contexts.interceptCall(ctx, call, headers, next), "request_id", requestId);
     }
 }

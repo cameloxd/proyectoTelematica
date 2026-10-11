@@ -48,7 +48,8 @@ public final class AuthServerInterceptor implements ServerInterceptor {
 
         // 4. Dejamos el user_id en el Context y pasamos la llamada.
         Context ctx = Context.current().withValue(Ctx.USER_ID, userId.get());
-        return Contexts.interceptCall(ctx, call, headers, next);
+        return new MdcServerCallListener<>(
+        Contexts.interceptCall(ctx, call, headers, next), "user_id", userId.get());
     }
 
     private static <ReqT, RespT> ServerCall.Listener<ReqT> reject(
