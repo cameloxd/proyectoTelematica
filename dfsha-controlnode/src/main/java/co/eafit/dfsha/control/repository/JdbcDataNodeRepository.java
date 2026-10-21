@@ -9,10 +9,11 @@ import javax.sql.DataSource;
 /** Adaptador PostgreSQL para el catálogo de DataNodes. */
 public final class JdbcDataNodeRepository implements DataNodeRepository {
   private static final String UPSERT = """
-      INSERT INTO datanode (node_name, endpoint, internal_endpoint, status, capacity_bytes, free_bytes)
-      VALUES (?, ?, ?, 'ALIVE', ?, ?)
+      INSERT INTO datanode (node_name, endpoint, internal_endpoint, node_token_hash, status, capacity_bytes, free_bytes)
+      VALUES (?, ?, ?, ?, 'ALIVE', ?, ?)
       ON CONFLICT (node_name) DO UPDATE SET endpoint = EXCLUDED.endpoint,
-        internal_endpoint = EXCLUDED.internal_endpoint, status = 'ALIVE',
+        internal_endpoint = EXCLUDED.internal_endpoint, node_token_hash = EXCLUDED.node_token_hash,
+        status = 'ALIVE',
         capacity_bytes = EXCLUDED.capacity_bytes, free_bytes = EXCLUDED.free_bytes,
         last_heartbeat_at = now()
       RETURNING datanode_id, node_name, endpoint, internal_endpoint, status::text,
@@ -21,10 +22,11 @@ public final class JdbcDataNodeRepository implements DataNodeRepository {
   private final DataSource dataSource;
   public JdbcDataNodeRepository(DataSource dataSource) { this.dataSource = dataSource; }
 
-  @Override public DataNode register(String name, String endpoint, String internalEndpoint, long capacity) throws SQLException {
+  @Override public DataNode register(String name, String endpoint, String internalEndpoint, long capacity,
+                                     String tokenHash) throws SQLException {
     try (Connection c = dataSource.getConnection(); PreparedStatement s = c.prepareStatement(UPSERT)) {
       s.setString(1, name); s.setString(2, endpoint); s.setString(3, internalEndpoint);
-      s.setLong(4, capacity); s.setLong(5, capacity);
+      s.setString(4, tokenHash); s.setLong(5, capacity); s.setLong(6, capacity);
       try (ResultSet r = s.executeQuery()) { r.next(); return map(r); }
     }
   }

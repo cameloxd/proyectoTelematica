@@ -6,6 +6,7 @@ import java.util.Optional;
 
 public interface DataNodeRepository {
   /** Registra o actualiza un nodo por nombre sin tocar las reservas pendientes. */
-  DataNode register(String name, String endpoint, String internalEndpoint, long capacityBytes) throws SQLException;
+  DataNode register(String name, String endpoint, String internalEndpoint, long capacityBytes,
+                    String tokenHash) throws SQLException;
   Optional<DataNode> findByName(String name) throws SQLException;
 }

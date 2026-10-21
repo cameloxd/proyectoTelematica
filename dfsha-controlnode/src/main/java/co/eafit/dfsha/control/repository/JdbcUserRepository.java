@@ -23,5 +23,13 @@ public final class JdbcUserRepository {
       }
     }
   }
+  public Optional<User> findActiveById(UUID id) throws SQLException {
+    try (Connection c = dataSource.getConnection(); PreparedStatement s = c.prepareStatement(
+        "SELECT user_id, username, password_hash, active FROM app_user WHERE user_id = ? AND active")) {
+      s.setObject(1, id); try (ResultSet r = s.executeQuery()) {
+        return r.next() ? Optional.of(new User(r.getObject(1, UUID.class), r.getString(2), r.getString(3), true)) : Optional.empty();
+      }
+    }
+  }
   public record User(UUID id, String username, String passwordHash, boolean active) { }
 }
