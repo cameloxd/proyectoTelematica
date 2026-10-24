@@ -7,10 +7,20 @@
     <groupId>co.eafit.dfsha</groupId><artifactId>dfsha-parent</artifactId><version>0.1.0-SNAPSHOT</version>
   </parent>
   <artifactId>dfsha-client</artifactId>
-  <name>dfsha-client</name>
+  <name>dfsha-client (CLI)</name>
+
+  <properties>
+    <main.class>co.eafit.dfsha.client.ClientMain</main.class>
+  </properties>
 
   <dependencies>
     <dependency><groupId>co.eafit.dfsha</groupId><artifactId>dfsha-common</artifactId></dependency>
   </dependencies>
-  <!-- TODO Fase 2 (Martin): empaquetado ejecutable (maven-shade-plugin) para Docker. -->
+
+  <build>
+    <plugins>
+      <!-- genera target/dfsha-client.jar (ver pluginManagement en el pom padre) -->
+      <plugin><groupId>org.apache.maven.plugins</groupId><artifactId>maven-shade-plugin</artifactId></plugin>
+    </plugins>
+  </build>
 </project>
