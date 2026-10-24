@@ -97,6 +97,7 @@ public final class ClientMain {
             case "put" -> {
               need(a, 2);
               Path local = Path.of(a[1]);
+              if (!Files.isRegularFile(local)) throw new IllegalArgumentException("no existe el archivo local " + local);
               String remote = DfsPaths.resolve(cwd, a.length > 2 ? a[2] : local.getFileName().toString());
               long start = System.nanoTime();
               dfs.put(local, remote);
