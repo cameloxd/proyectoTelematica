@@ -1,0 +1,6 @@
+# Los scripts corren dentro de contenedores Linux: siempre con fin de línea LF,
+# aunque se clone el repo en Windows (si no, "/bin/sh^M: not found").
+*.sh   text eol=lf
+*.sql  text eol=lf
+*.yml  text eol=lf
+Dockerfile text eol=lf

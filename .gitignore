@@ -27,5 +27,5 @@ replay_pid*
 *.iml
 .DS_Store
 
-# Docs
-.../docs/
+# Archivos de prueba de deploy/escenarios.sh
+/deploy/.escenarios/
