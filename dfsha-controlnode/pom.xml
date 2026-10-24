@@ -11,6 +11,10 @@
 
   <dependencies>
     <dependency><groupId>co.eafit.dfsha</groupId><artifactId>dfsha-common</artifactId></dependency>
+    <dependency><groupId>com.zaxxer</groupId><artifactId>HikariCP</artifactId><version>${hikari.version}</version></dependency>
+    <dependency><groupId>org.postgresql</groupId><artifactId>postgresql</artifactId><version>${postgresql.version}</version></dependency>
+    <dependency><groupId>org.junit.jupiter</groupId><artifactId>junit-jupiter</artifactId><version>${junit.version}</version><scope>test</scope></dependency>
   </dependencies>
+  <build><plugins><plugin><groupId>org.apache.maven.plugins</groupId><artifactId>maven-surefire-plugin</artifactId><version>3.2.5</version></plugin></plugins></build>
   <!-- TODO Fase 2 (Martin): empaquetado ejecutable (maven-shade-plugin) para Docker. -->
 </project>
