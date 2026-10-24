@@ -7,25 +7,20 @@
     <groupId>co.eafit.dfsha</groupId><artifactId>dfsha-parent</artifactId><version>0.1.0-SNAPSHOT</version>
   </parent>
   <artifactId>dfsha-datanode</artifactId>
-  <name>dfsha-datanode</name>
+  <name>dfsha-datanode (bloques)</name>
+
+  <properties>
+    <main.class>co.eafit.dfsha.datanode.DataNodeMain</main.class>
+  </properties>
 
   <dependencies>
     <dependency><groupId>co.eafit.dfsha</groupId><artifactId>dfsha-common</artifactId></dependency>
-    <dependency>
-      <groupId>io.grpc</groupId>
-      <artifactId>grpc-stub</artifactId>
-      <version>${grpc.version}</version>
-    </dependency>
-    <dependency>
-      <groupId>io.grpc</groupId>
-      <artifactId>grpc-netty-shaded</artifactId>
-      <version>${grpc.version}</version>
-    </dependency>
-    <dependency>
-      <groupId>io.grpc</groupId>
-      <artifactId>grpc-protobuf</artifactId>
-      <version>${grpc.version}</version>
-    </dependency>
   </dependencies>
-  <!-- TODO Fase 2 (Martin): empaquetado ejecutable (maven-shade-plugin) para Docker. -->
+
+  <build>
+    <plugins>
+      <!-- genera target/dfsha-datanode.jar (ver pluginManagement en el pom padre) -->
+      <plugin><groupId>org.apache.maven.plugins</groupId><artifactId>maven-shade-plugin</artifactId></plugin>
+    </plugins>
+  </build>
 </project>
