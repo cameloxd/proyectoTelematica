@@ -32,6 +32,7 @@ CREATE TABLE datanode (
     node_name         VARCHAR(120) NOT NULL UNIQUE,
     endpoint          VARCHAR(255) NOT NULL,        -- visible para los Clientes
     internal_endpoint VARCHAR(255) NOT NULL,        -- entre nodos
+    node_token_hash   CHAR(64)     NOT NULL CHECK (node_token_hash ~ '^[0-9a-f]{64}$'),
     status            node_status  NOT NULL DEFAULT 'ALIVE',
     capacity_bytes    BIGINT  NOT NULL CHECK (capacity_bytes >= 0),
     free_bytes        BIGINT  NOT NULL CHECK (free_bytes >= 0),

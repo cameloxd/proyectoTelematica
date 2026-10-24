@@ -17,11 +17,11 @@ Un nodo entra como `ALIVE`. Fase 2 actualizará `last_heartbeat_at` desde Rabbit
 | `available_bytes` | PostgreSQL (columna generada) | `free_bytes - reserved_bytes` |
 | `status` | ControlNode | Estado de disponibilidad calculado |
 
-La Fase 2 reservará espacio mediante un `UPDATE` condicional dentro de la transacción de `AllocateFile`; así nunca se sobreasigna una capacidad que dos clientes observaron simultáneamente. Los bloques y sus ubicaciones se vinculan por `dfs_block` y `block_location`, permitiendo varias réplicas en el futuro.
+La Fase 2 reserva espacio mediante un `UPDATE` condicional dentro de la transacción de `AllocateFile`; así nunca se sobreasigna una capacidad que dos clientes observaron simultáneamente. Los bloques y sus ubicaciones se vinculan por `dfs_block` y `block_location`, permitiendo varias réplicas en el futuro.
 
 ## Adaptadores de persistencia de Fase 1
 
-`JdbcUserRepository`, `JdbcDirectoryRepository`, `JdbcFileRepository`, `JdbcBlockRepository`, `JdbcBlockLocationRepository` y `JdbcDataNodeRepository` contienen las consultas del esquema. Solo el último se conecta todavía a gRPC: `NodeRegistryGrpcService` valida la solicitud y persiste `RegisterDataNode`. Las operaciones de namespace, asignación y commit se conectarán a esos adaptadores en Fase 2.
+`JdbcUserRepository`, `JdbcDirectoryRepository`, `JdbcFileRepository`, `JdbcBlockRepository`, `JdbcBlockLocationRepository` y `JdbcDataNodeRepository` contienen las consultas del esquema. `JdbcFileFlowRepository` agrega las transacciones completas de asignación, reporte, commit y manifiesto de la Fase 2.
 
 ### Prueba manual contra PostgreSQL
 
