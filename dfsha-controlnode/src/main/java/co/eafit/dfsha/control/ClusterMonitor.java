@@ -65,20 +65,17 @@ public final class ClusterMonitor {
 
   // ------------------------------------------------------------------ 1. heartbeats
 
+  /** Un latido: el nodo prueba quién es con su node_token y queda ALIVE con sus datos actuales. */
   private void onHeartbeat(byte[] body) throws Exception {
     Heartbeat hb = Heartbeat.parseFrom(body);
-    String revived = db.tx(c -> {
-      String previous = Db.one(c, "SELECT status::text FROM datanode WHERE datanode_id = ?",
-          r -> r.getString(1), UUID.fromString(hb.getDatanodeId()));
-      NodeRegistryImpl.requireNodeToken(c, UUID.fromString(hb.getDatanodeId()), hb.getNodeToken());
-      Db.update(c, """
+    UUID nodeId = UUID.fromString(hb.getDatanodeId());
+    db.tx(c -> {
+      NodeRegistryImpl.requireNodeToken(c, nodeId, hb.getNodeToken());
+      return Db.update(c, """
           UPDATE datanode SET status = 'ALIVE', last_heartbeat_at = now(),
                  capacity_bytes = ?, free_bytes = ?, active_transfers = ?
-          WHERE datanode_id = ?""",
-          hb.getCapacityBytes(), hb.getFreeBytes(), hb.getActiveTransfers(), UUID.fromString(hb.getDatanodeId()));
-      return "ALIVE".equals(previous) ? null : previous;
+          WHERE datanode_id = ?""", hb.getCapacityBytes(), hb.getFreeBytes(), hb.getActiveTransfers(), nodeId);
     });
-    if (revived != null) log.info("DataNode {} volvió: {} -> ALIVE", hb.getDatanodeId(), revived);
   }
 
   // ------------------------------------------------------------------ 2. ALIVE / SUSPECT / DEAD
@@ -138,11 +135,11 @@ public final class ClusterMonitor {
         for (Missing block : missing) {
           // Origen: una copia escrita en un nodo ALIVE (la menos cargada).
           Source source = Db.one(c, """
-              SELECT d.datanode_id, d.internal_endpoint FROM block_location l
+              SELECT d.datanode_id, d.internal_endpoint, d.node_name FROM block_location l
               JOIN datanode d ON d.datanode_id = l.datanode_id
               WHERE l.block_id = ? AND l.state = 'WRITTEN' AND d.status = 'ALIVE'
               ORDER BY d.active_transfers LIMIT 1""",
-              r -> new Source(r.getString(1), r.getString(2)), block.id());
+              r -> new Source(r.getString(1), r.getString(2), r.getString(3)), block.id());
           if (source == null) continue;      // no hay ninguna copia viva de la cual copiar
 
           Set<UUID> alreadyHaveIt = new HashSet<>(Db.query(c,
@@ -164,16 +161,15 @@ public final class ClusterMonitor {
                 .setChecksumSha256(block.checksum()).setSizeBytes(block.size())
                 .setReadToken(tokens.issue(Tokens.READ, block.id().toString(), 600))
                 .build());
+            log.info("Réplica pedida: bloque {} de {} a {}", block.id(), source.name(), target.name);
           }
         }
         return result;
       });
 
-      for (ReplicationTask task : tasks) {
+      for (ReplicationTask task : tasks) {     // cada tarea va a la cola del DataNode destino
         rabbit.declareNodeQueues(task.getTargetDatanodeId());
         rabbit.publish(Rabbit.replicationKey(task.getTargetDatanodeId()), task.toByteArray(), true);
-        log.info("Réplica pedida: bloque {} de {} a {}", task.getBlockId(), task.getSourceDatanodeId(),
-            task.getTargetDatanodeId());
       }
     } catch (Exception e) {
       log.error("Falló el escaneo de réplicas: {}", e.toString());
@@ -182,5 +178,5 @@ public final class ClusterMonitor {
 
   private record Missing(UUID id, long size, String checksum, int copies) { }
 
-  private record Source(String nodeId, String endpoint) { }
+  private record Source(String nodeId, String endpoint, String name) { }
 }
