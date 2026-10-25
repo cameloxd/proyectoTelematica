@@ -1,32 +1,37 @@
 package co.eafit.dfsha.datanode;
 
 import co.eafit.dfsha.common.Env;
+import co.eafit.dfsha.common.Rpc;
+import co.eafit.dfsha.common.Tokens;
 import io.grpc.Server;
-import io.grpc.ServerBuilder;
-
-import java.nio.file.Path;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 /**
- * Punto de entrada del DataNode.
- * Ensambla el BlockStorageService y arranca el servidor gRPC.
+ * DataNode: guarda bloques. Solo arma las piezas:
+ * BlockStore (disco cifrado), DataNodeServiceImpl (gRPC), ControlLink (registro, heartbeat, colas)
+ * y Replicator (copia de réplicas).
  */
 public final class DataNodeMain {
+  private static final Logger log = LoggerFactory.getLogger(DataNodeMain.class);
 
-    public static void main(String[] args) throws Exception {
-        int port = Env.getInt("GRPC_PORT", 50061);
-        String storagePath = System.getenv().getOrDefault("STORAGE_PATH", "./data/blocks");
+  public static void main(String[] args) throws Exception {
+    String name = Env.get("NODE_NAME", "datanode-1");
+    int port = Env.getInt("GRPC_PORT", 50061);
 
-        BlockStorageService storage = new BlockStorageService(Path.of(storagePath));
+    BlockStore store = BlockStore.fromEnv(name);
+    ControlLink cluster = new ControlLink(name, store);
+    DataNodeServiceImpl service = new DataNodeServiceImpl(store, Tokens.fromEnv(), cluster);   // solo clave pública
 
-        Server server = ServerBuilder.forPort(port)
-                .addService(storage)
-                .build()
-                .start();
+    Server server = Rpc.server(port, service.bindService());   // 1. ya puede recibir bloques
+    cluster.register(port);                                    // 2. el ControlNode ya puede asignarle bloques
+    cluster.start(new Replicator(store, cluster));             // 3. heartbeats y colas de RabbitMQ
+    log.info("DataNode {} listo en el puerto {}", name, port);
 
-        System.out.println("DFSha DataNode escuchando en " + port);
-        System.out.println("Almacenamiento en: " + Path.of(storagePath).toAbsolutePath());
-
-        Runtime.getRuntime().addShutdownHook(new Thread(server::shutdown));
-        server.awaitTermination();
-    }
+    Runtime.getRuntime().addShutdownHook(new Thread(() -> {
+      server.shutdown();
+      cluster.stop();
+    }));
+    server.awaitTermination();
+  }
 }
