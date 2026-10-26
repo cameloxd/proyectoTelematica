@@ -9,12 +9,10 @@ import static io.grpc.Status.UNAUTHENTICATED;
 
 import co.eafit.dfsha.common.DfsPaths;
 import co.eafit.dfsha.common.Env;
-import co.eafit.dfsha.common.Rabbit;
 import co.eafit.dfsha.common.Rpc;
 import co.eafit.dfsha.common.Tokens;
 import co.eafit.dfsha.grpc.v1.AllocateFileRequest;
 import co.eafit.dfsha.grpc.v1.AllocateFileResponse;
-import co.eafit.dfsha.grpc.v1.BlockDeleteTask;
 import co.eafit.dfsha.grpc.v1.BlockLocation;
 import co.eafit.dfsha.grpc.v1.BlockPlan;
 import co.eafit.dfsha.grpc.v1.CommitFileRequest;
@@ -52,16 +50,14 @@ public final class ControlServiceImpl extends ControlServiceGrpc.ControlServiceI
 
   private final Db db;
   private final Tokens tokens;
-  private final Rabbit rabbit;
   private final Placement placement = Placement.fromEnv();
   private final int blockSize = Env.getInt("BLOCK_SIZE_BYTES", 8 * 1024 * 1024);
   private final long sessionTtl = Env.getLong("SESSION_TTL_SECONDS", 3600);
   private final long blockTokenTtl = Env.getLong("BLOCK_TOKEN_TTL_SECONDS", 900);
 
-  public ControlServiceImpl(Db db, Tokens tokens, Rabbit rabbit) {
+  public ControlServiceImpl(Db db, Tokens tokens) {
     this.db = db;
     this.tokens = tokens;
-    this.rabbit = rabbit;
   }
 
   // =================================================================== usuarios
@@ -142,7 +138,9 @@ public final class ControlServiceImpl extends ControlServiceGrpc.ControlServiceI
       UUID owner = caller();
       String path = DfsPaths.resolve("/", req.getPath());
       if (path.equals("/")) throw Rpc.error(INVALID_ARGUMENT, "no se puede borrar /");
-      List<Copy> copies = db.tx(c -> {
+      Integer queued = db.tx(c -> {
+        // Mismo orden que AllocateFile: capacidad -> namespace. Incluye réplicas ya planificadas.
+        CapacityReservations.lock(c);
         lockNamespace(c, owner);
         UUID fileId = Db.one(c, "SELECT file_id FROM dfs_file WHERE owner_id = ? AND path = ? AND status <> 'DELETED'",
             r -> r.getObject(1, UUID.class), owner, path);
@@ -154,20 +152,11 @@ public final class ControlServiceImpl extends ControlServiceGrpc.ControlServiceI
           throw Rpc.error(FAILED_PRECONDITION, "el archivo tiene lock: haz unlock o espera a que venza");
         }
         Db.update(c, "UPDATE dfs_file SET status = 'DELETED', deleted_at = now() WHERE file_id = ?", fileId);
-        return Db.query(c, """
-            UPDATE block_location l SET state = 'DELETED'
-            FROM dfs_block b
-            WHERE b.block_id = l.block_id AND b.file_id = ? AND l.state <> 'DELETED'
-            RETURNING l.block_id, l.datanode_id""", r -> new Copy(r.getString(1), r.getString(2), null), fileId);
+        return DeleteOutbox.enqueueFile(c, fileId);
       });
-      if (copies == null) return Rpc.ok("directorio borrado: " + path);
-      for (Copy copy : copies) {     // una tarea por copia: cada DataNode borra lo suyo
-        rabbit.declareNodeQueues(copy.nodeId());
-        rabbit.publish(Rabbit.deleteKey(copy.nodeId()),
-            BlockDeleteTask.newBuilder().setBlockId(copy.blockId()).build().toByteArray(), true);
-      }
-      log.info("Borrado {}: {} copias de bloques enviadas a borrar", path, copies.size());
-      return Rpc.ok("archivo borrado: " + path);
+      if (queued == null) return Rpc.ok("directorio borrado: " + path);
+      log.info("Borrado lógico {}: {} tareas persistidas para publicación", path, queued);
+      return Rpc.ok("archivo borrado: " + path + " (limpieza física en segundo plano)");
     });
   }
 

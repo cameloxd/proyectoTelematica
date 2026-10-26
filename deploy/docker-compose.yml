@@ -43,6 +43,7 @@ x-controlnode: &controlnode
     TOKEN_PRIVATE_KEY_FILE: /run/secrets/token_private_key
     BLOCK_SIZE_BYTES: ${BLOCK_SIZE_BYTES:-8388608}           # 8 MiB
     REPLICATION_FACTOR: ${REPLICATION_FACTOR:-3}
+    DELETE_RETRY_SECONDS: ${DELETE_RETRY_SECONDS:-10}
     RESERVED_BYTES: "268435456"                              # 256 MiB por nodo que nunca se asignan
     SUSPECT_AFTER_SECONDS: "15"
     DEAD_AFTER_SECONDS: "30"
@@ -86,6 +87,7 @@ services:
     volumes:
       - postgres_data:/var/lib/postgresql/data
       - ./schema.sql:/docker-entrypoint-initdb.d/01-schema.sql:ro
+      - ./migrations/001-block-delete-outbox.sql:/docker-entrypoint-initdb.d/01a-delete-outbox.sql:ro
       - ./postgres/init-replication.sh:/docker-entrypoint-initdb.d/02-replication.sh:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U dfsha -d dfsha"]
@@ -116,16 +118,14 @@ services:
     networks: [dfsha_net]
     environment:
       RABBITMQ_DEFAULT_USER: dfsha
-    entrypoint:
-      - /bin/sh
-      - -c
-      - export RABBITMQ_DEFAULT_PASS="$$(cat /run/secrets/rabbitmq_password)" && exec docker-entrypoint.sh rabbitmq-server
+    entrypoint: ["/bin/sh", "/scripts/rabbitmq-entrypoint.sh"]
     secrets: [rabbitmq_password]
     ports:
       - "127.0.0.1:${RABBITMQ_AMQP_PORT:-5672}:5672"
       - "127.0.0.1:15672:15672"        # consola web: http://localhost:15672
     volumes:
       - rabbitmq_data:/var/lib/rabbitmq
+      - ./rabbitmq-entrypoint.sh:/scripts/rabbitmq-entrypoint.sh:ro
     healthcheck:
       test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
       interval: 10s

@@ -13,7 +13,7 @@ Distribuidos, EAFIT 2026-2. Equipo: Mendel, Camilo y Martín.
 - [Pruebas](docs/PRUEBAS.md): comprobación unitaria, integración PostgreSQL y límites de la evidencia.
 - [Índice de documentos](docs/README.md): distingue documentación vigente de diseños históricos.
 
-Esta consolidación es local y anterior al despliegue. Una configuración de HA o un script de escenarios no equivalen a una demostración end-to-end.
+La consolidación está integrada en `develop` por el PR #10 (`cb67cf0`). La recuperación de publicación de borrados se desarrolla después, en `fix/control-delete-outbox`, y requiere su propia revisión e integración. Una configuración de HA o un script de escenarios no equivalen a una demostración end-to-end.
 
 ## Qué hace
 
@@ -28,6 +28,7 @@ Esta consolidación es local y anterior al despliegue. Una configuración de HA 
 - **Comunicación**:
   - gRPC con TLS cuando se configuran certificados y CA, como en Compose.
   - RabbitMQ para heartbeats, réplicas y borrados.
+  - Outbox PostgreSQL para conservar y reintentar la publicación de borrados aunque falle RabbitMQ; no es un acuse de eliminación física.
   - PostgreSQL primario + standby con streaming replication y promoción manual asistida.
 
 ```text
@@ -53,6 +54,8 @@ Para incluir la integración PostgreSQL y entender qué demuestra cada ejecució
 ## Correr el clúster (etapa posterior)
 
 Antes de iniciarlo, revisar los pendientes de [ESTADO-DEL-PROYECTO.md](docs/ESTADO-DEL-PROYECTO.md). Estos comandos se conservan como referencia: la consolidación no inicia contenedores ni promueve bases de datos.
+
+Si la base ya existe, aplicar primero la [migración de la outbox](deploy/migrations/README.md) al primario. Recrear contenedores no migra un volumen existente; no usar `down -v` para actualizar el esquema.
 
 ```bash
 mvn -q package                 # compila, corre las pruebas y genera los jars

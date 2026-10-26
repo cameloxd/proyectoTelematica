@@ -64,4 +64,17 @@ class BlockStoreTest {
       assertEquals(0, files.count());
     }
   }
+
+  @Test
+  void borrarDosVecesElMismoBloqueNoAfectaAOtroArchivo() throws Exception {
+    var storage = store();
+    String old = UUID.randomUUID().toString();
+    String current = UUID.randomUUID().toString();
+    storage.save(old, new byte[] {1});
+    storage.save(current, new byte[] {2});
+    storage.delete(old);
+    storage.delete(old); // entrega repetida después de una confirmación ambigua
+    assertEquals(1, storage.blockCount());
+    assertArrayEquals(new byte[] {2}, storage.load(current));
+  }
 }

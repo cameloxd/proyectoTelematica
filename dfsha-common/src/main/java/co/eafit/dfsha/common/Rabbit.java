@@ -7,6 +7,7 @@ import com.rabbitmq.client.MessageProperties;
 import java.io.IOException;
 import java.util.Map;
 import java.util.concurrent.TimeoutException;
+import java.util.concurrent.atomic.AtomicBoolean;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -71,11 +72,11 @@ public final class Rabbit implements AutoCloseable {
 
   /** Declara las colas de trabajo de un DataNode (réplicas y borrados). Repetirlo no hace daño. */
   public synchronized void declareNodeQueues(String nodeId) throws IOException {
-    declareWorkQueue(replicationQueue(nodeId), replicationKey(nodeId), "dfsha.replication.failed");
-    declareWorkQueue(deleteQueue(nodeId), deleteKey(nodeId), "dfsha.delete.failed");
+    declareWorkQueue(publisher, replicationQueue(nodeId), replicationKey(nodeId), "dfsha.replication.failed");
+    declareWorkQueue(publisher, deleteQueue(nodeId), deleteKey(nodeId), "dfsha.delete.failed");
   }
 
-  private void declareWorkQueue(String queue, String routingKey, String failedQueue) throws IOException {
+  private static void declareWorkQueue(Channel publisher, String queue, String routingKey, String failedQueue) throws IOException {
     publisher.queueDeclare(failedQueue, true, false, false, null);
     publisher.queueBind(failedQueue, FAILED_EXCHANGE, failedQueue);
     publisher.queueDeclare(queue, true, false, false, Map.<String, Object>of(
@@ -88,6 +89,24 @@ public final class Rabbit implements AutoCloseable {
   public synchronized void publish(String routingKey, byte[] body, boolean persistent) throws Exception {
     publisher.basicPublish(EXCHANGE, routingKey, persistent ? MessageProperties.PERSISTENT_BASIC : null, body);
     if (persistent) publisher.waitForConfirmsOrDie(5000);
+  }
+
+  /** Publicación recuperable para la outbox. Un canal nuevo aísla retornos y confirma esta tarea. */
+  public void publishDelete(String nodeId, byte[] body) throws Exception {
+    try (Channel channel = connection.createChannel()) {
+      publishDelete(channel, nodeId, body);
+    }
+  }
+
+  static void publishDelete(Channel channel, String nodeId, byte[] body) throws Exception {
+    channel.confirmSelect();
+    declareWorkQueue(channel, deleteQueue(nodeId), deleteKey(nodeId), "dfsha.delete.failed");
+    AtomicBoolean returned = new AtomicBoolean();
+    channel.addReturnListener(message -> returned.set(true));
+    // Un confirm por sí solo no asegura enrutamiento. mandatory provoca basic.return si no hay cola.
+    channel.basicPublish(EXCHANGE, deleteKey(nodeId), true, MessageProperties.PERSISTENT_BASIC, body);
+    channel.waitForConfirmsOrDie(5000);
+    if (returned.get()) throw new IOException("Tarea de borrado sin cola de destino");
   }
 
   /** Lo que hace un consumidor con cada mensaje. Si lanza una excepción, el mensaje se rechaza. */

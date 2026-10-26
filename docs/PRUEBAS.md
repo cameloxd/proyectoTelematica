@@ -19,7 +19,7 @@ Las pruebas RPC actuales se ejecutan sin TLS. Usar una terminal de pruebas sin c
 
 ## 2. Integración con PostgreSQL real
 
-Usar una base de pruebas existente, con un usuario que pueda crear esquemas. No apuntar a producción. Cada caso crea `dfsha_c2_<uuid>`, carga `deploy/schema.sql` y elimina únicamente ese esquema al terminar; no trunca tablas ajenas.
+Usar una base de pruebas existente, con un usuario que pueda crear esquemas. No apuntar a producción. Cada caso crea `dfsha_c2_<uuid>`, carga `deploy/schema.sql` seguido de `deploy/migrations/001-block-delete-outbox.sql` y elimina únicamente ese esquema al terminar; no trunca tablas ajenas.
 
 Ejemplo PowerShell, adaptando URL y credenciales locales:
 
@@ -43,12 +43,16 @@ Clases relevantes:
 - `ControlFileFlowPostgresTest`: autenticación, aislamiento, partición, reportes, commit/manifiesto, reservas, idempotencia y concurrencia.
 - `ClusterMonitorPostgresTest`: planificador real de réplicas, exclusión de nodos que ya tienen copia, no duplicación del plan y capacidad compartida con primarias.
 - Ambas reutilizan `PostgresControlFixture`: un único fixture, esquema aislado y servidor gRPC local. No se crea un segundo repositorio ficticio de metadatos.
+- `DeleteOutboxPostgresTest` reutiliza el mismo fixture: atomicidad de borrado/tarea, fallos SQL, transporte no disponible, reinicio del trabajador, espera entre intentos, recuperación de filas antiguas mediante migración, concurrencia entre trabajadores, entrega repetida tras confirmación ambigua y ciclo de vida del trabajador de fondo. Solo el transporte se inyecta; no demuestra conexión con un broker real ni eliminación distribuida.
+- `RabbitDeletePublishTest` (common) comprueba el contrato AMQP con un canal simulado: cola durable, mensaje persistente y obligatorio, confirmación, retorno sin ruta, timeout y nack. No es un clúster RabbitMQ.
 
 No requieren RabbitMQ para planificar. La prueba del monitor reserva metadatos y devuelve tareas; no las publica ni hace la copia física.
 
 ## 3. Almacenamiento
 
 `BlockStoreTest` usa directorios temporales, comprueba lectura/cifrado, alteración GCM y rechazo de identificadores antes de crear archivos. No necesita secretos del despliegue.
+
+También comprueba que entregar dos veces el mismo borrado no elimina otro bloque. Esto valida el comportamiento local de `deleteIfExists`, no el acuse del consumidor RabbitMQ.
 
 En entornos Windows restringidos puede ser necesario situar el temporal del JVM de pruebas en una carpeta permitida. Por ejemplo, después de crear una carpeta local `target/test-temp`:
 

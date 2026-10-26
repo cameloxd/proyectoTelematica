@@ -29,3 +29,4 @@ replay_pid*
 
 # Archivos de prueba de deploy/escenarios.sh
 /deploy/.escenarios/
+/deploy/.demo/
