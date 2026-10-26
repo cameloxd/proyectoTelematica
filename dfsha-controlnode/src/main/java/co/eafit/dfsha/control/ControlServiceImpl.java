@@ -103,8 +103,12 @@ public final class ControlServiceImpl extends ControlServiceGrpc.ControlServiceI
       UUID owner = caller();
       String path = DfsPaths.resolve("/", req.getPath());
       db.tx(c -> {
+        lockNamespace(c, owner);
         requireDirectory(c, owner, DfsPaths.parent(path));
-        if (committedFile(c, owner, path) != null) throw Rpc.error(ALREADY_EXISTS, "ya hay un archivo con ese nombre");
+        if (Db.one(c, "SELECT 1 FROM dfs_file WHERE owner_id = ? AND path = ? AND status <> 'DELETED'",
+            r -> 1, owner, path) != null) {
+          throw Rpc.error(ALREADY_EXISTS, "ya hay un archivo con ese nombre (pendiente o confirmado)");
+        }
         return Db.update(c, "INSERT INTO dfs_directory(owner_id, path) VALUES (?, ?)", owner, path);
       });
       return Rpc.ok("directorio creado: " + path);
@@ -139,6 +143,7 @@ public final class ControlServiceImpl extends ControlServiceGrpc.ControlServiceI
       String path = DfsPaths.resolve("/", req.getPath());
       if (path.equals("/")) throw Rpc.error(INVALID_ARGUMENT, "no se puede borrar /");
       List<Copy> copies = db.tx(c -> {
+        lockNamespace(c, owner);
         UUID fileId = Db.one(c, "SELECT file_id FROM dfs_file WHERE owner_id = ? AND path = ? AND status <> 'DELETED'",
             r -> r.getObject(1, UUID.class), owner, path);
         if (fileId == null) {
@@ -195,10 +200,17 @@ public final class ControlServiceImpl extends ControlServiceGrpc.ControlServiceI
         throw Rpc.error(INVALID_ARGUMENT, "path, tamaño u operation_id inválido");
       }
       return db.tx(c -> {
+        // El lock debe preceder a la consulta de idempotencia y a CUALQUIER cambio del plan.
+        // Así dos peticiones simultáneas ven el resultado confirmado de la primera.
+        CapacityReservations.lock(c);
+        lockNamespace(c, owner);
         // 1. Idempotencia: si el cliente reintenta con el mismo operation_id, recibe el mismo plan.
-        FileRow previous = Db.one(c, "SELECT file_id, path, size_bytes FROM dfs_file WHERE owner_id = ? AND operation_id = ?",
-            FileRow::read, owner, operationId);
+        UploadRow previous = Db.one(c, "SELECT file_id, path, size_bytes, status::text FROM dfs_file WHERE owner_id = ? AND operation_id = ?",
+            r -> new UploadRow(r.getObject(1, UUID.class), r.getString(2), r.getLong(3), r.getString(4)), owner, operationId);
         if (previous != null) {
+          if (previous.status().equals("DELETED")) {
+            throw Rpc.error(FAILED_PRECONDITION, "esa operación fue eliminada o reemplazada; usa un operation_id nuevo");
+          }
           if (!previous.path().equals(path) || previous.size() != size) {
             throw Rpc.error(FAILED_PRECONDITION, "ese operation_id ya se usó con otro archivo");
           }
@@ -223,8 +235,7 @@ public final class ControlServiceImpl extends ControlServiceGrpc.ControlServiceI
         Db.update(c, "UPDATE dfs_file SET status = 'DELETED', deleted_at = now() WHERE owner_id = ? AND path = ? AND status = 'PENDING'",
             owner, path);
 
-        // 3. Un AllocateFile a la vez elige nodos, para que dos subidas no cuenten el mismo espacio libre.
-        Db.one(c, "SELECT pg_advisory_xact_lock(1)", r -> 1);
+        // 3. El lock adquirido al inicio también impide reservar el mismo espacio en dos subidas.
         UUID fileId = Db.one(c, """
             INSERT INTO dfs_file(owner_id, path, size_bytes, block_size_bytes, operation_id)
             VALUES (?, ?, ?, ?, ?) RETURNING file_id""",
@@ -418,6 +429,14 @@ public final class ControlServiceImpl extends ControlServiceGrpc.ControlServiceI
     }
   }
 
+  /** Serializa mkdir, rm/rmdir y AllocateFile del mismo usuario, incluso entre ControlNodes. */
+  private static void lockNamespace(Connection c, UUID owner) throws SQLException {
+    if (Db.one(c, "SELECT user_id FROM app_user WHERE user_id = ? FOR UPDATE",
+        r -> r.getObject(1, UUID.class), owner) == null) {
+      throw Rpc.error(UNAUTHENTICATED, "el usuario ya no existe");
+    }
+  }
+
   private static UUID committedFile(Connection c, UUID owner, String path) throws SQLException {
     return Db.one(c, "SELECT file_id FROM dfs_file WHERE owner_id = ? AND path = ? AND status = 'COMMITTED'",
         r -> r.getObject(1, UUID.class), owner, path);
@@ -426,6 +445,8 @@ public final class ControlServiceImpl extends ControlServiceGrpc.ControlServiceI
   private record User(String id, String passwordHash) { }
 
   private record Copy(String blockId, String nodeId, String endpoint) { }
+
+  private record UploadRow(UUID id, String path, long size, String status) { }
 
   private record FileRow(UUID id, String path, long size) {
     static FileRow read(java.sql.ResultSet r) throws SQLException {

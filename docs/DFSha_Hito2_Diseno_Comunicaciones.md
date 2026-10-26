@@ -1,5 +1,7 @@
 # DFSha — Hito 2: diseño y comunicaciones
 
+> Diseño histórico conservado como entregable. Algunas clases, campos, garantías y propuestas cambiaron en la implementación. La referencia vigente es [GUIA-DEL-CODIGO.md](GUIA-DEL-CODIGO.md); las tareas y brechas reales están en [ESTADO-DEL-PROYECTO.md](ESTADO-DEL-PROYECTO.md). No reimplementar automáticamente sus pendientes antiguos.
+
 ## 1. Propósito
 
 Este documento cierra las decisiones técnicas necesarias para iniciar la implementación de DFSha en Java:

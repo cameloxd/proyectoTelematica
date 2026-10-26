@@ -57,6 +57,7 @@ public final class BlockStore {
   }
 
   public void save(String blockId, byte[] data) throws IOException, GeneralSecurityException {
+    Path target = file(blockId);     // validar antes de cifrar o crear cualquier archivo temporal
     byte[] iv = new byte[IV_BYTES];
     random.nextBytes(iv);
     Cipher cipher = Cipher.getInstance("AES/GCM/NoPadding");
@@ -69,7 +70,7 @@ public final class BlockStore {
     System.arraycopy(encrypted, 0, stored, IV_BYTES, encrypted.length);
     Path tmp = dir.resolve(blockId + "." + UUID.randomUUID() + ".tmp");
     Files.write(tmp, stored, CREATE_NEW, WRITE, SYNC);              // SYNC: queda en disco antes de seguir
-    Files.move(tmp, file(blockId), REPLACE_EXISTING, ATOMIC_MOVE);
+    Files.move(tmp, target, REPLACE_EXISTING, ATOMIC_MOVE);
   }
 
   /** Lee y descifra un bloque. Lanza NoSuchFileException si este nodo no lo tiene. */

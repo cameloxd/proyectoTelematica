@@ -64,5 +64,15 @@ comportamiento) - `test` - `docs` - `build` (Maven, dependencias) - `chore` (man
 - El autor debe poder explicar cada parte del codigo, incluido el generado con IA.
 - Cambios a `dfsha.proto`: avisar al grupo antes de abrir el PR; Martin los aprueba.
 
-## 5. Definicion de "terminado"
+## 5. Evitar funcionalidades duplicadas
+
+Antes de abrir una rama, actualizar las referencias y consultar [el inventario vigente](docs/ESTADO-DEL-PROYECTO.md) y [el mapa del código](docs/GUIA-DEL-CODIGO.md).
+
+- Si la capacidad ya existe, la tarea debe describir la corrección, prueba o mejora concreta; no crear otra implementación por fase o por integrante.
+- Reutilizar `Placement`, `CapacityReservations`, `Tokens`, `Rpc`, `Rabbit` y el fixture PostgreSQL común en vez de copiar reglas o infraestructura de pruebas.
+- Las ramas viejas y los documentos marcados como históricos no son una lista actual de pendientes. Comparar cualquier cambio antes de reutilizarlo; no mezclar completas implementaciones anteriores a la reescritura.
+- Coordinar los archivos compartidos y el contrato antes de cambiarlos. No borrar el trabajo de otra persona para resolver un solapamiento.
+- Actualizar el inventario si cambia una capacidad, su evidencia o su ubicación de publicación. Un commit local, una función programada y una prueba end-to-end aprobada son estados distintos.
+
+## 6. Definicion de "terminado"
 Compila, tiene al menos una prueba o una forma documentada de probarlo, esta revisado y mergeado a `develop`.

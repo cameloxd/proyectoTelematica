@@ -5,6 +5,7 @@ import co.eafit.dfsha.common.Rabbit;
 import co.eafit.dfsha.common.Tokens;
 import co.eafit.dfsha.grpc.v1.Heartbeat;
 import co.eafit.dfsha.grpc.v1.ReplicationTask;
+import java.sql.SQLException;
 import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
@@ -106,74 +107,78 @@ public final class ClusterMonitor {
 
   private void replicateMissingCopies() {
     try {
-      List<ReplicationTask> tasks = db.tx(c -> {
-        List<ReplicationTask> result = new ArrayList<>();
-        // Solo un ControlNode escanea a la vez (si el otro lo está haciendo, esta vuelta se salta).
-        if (!Db.one(c, "SELECT pg_try_advisory_xact_lock(2)", r -> r.getBoolean(1))) return result;
-
-        // Una réplica pedida hace más de 60 s que nunca llegó (nodo caído, tarea fallida) se reintenta.
-        Db.update(c, """
-            DELETE FROM block_location
-            WHERE role = 'REPLICA' AND state = 'PLANNED' AND created_at < now() - interval '60 seconds'""");
-
-        // Copias que cuentan: las PLANNED (en camino) y las WRITTEN en nodos que no estén DEAD.
-        List<Missing> missing = Db.query(c, """
-            SELECT b.block_id, b.size_bytes, b.checksum_sha256,
-                   COUNT(*) FILTER (WHERE l.state = 'PLANNED' OR d.status <> 'DEAD') AS copies
-            FROM dfs_block b
-            JOIN dfs_file f ON f.file_id = b.file_id AND f.status = 'COMMITTED'
-            JOIN block_location l ON l.block_id = b.block_id AND l.state <> 'DELETED'
-            JOIN datanode d ON d.datanode_id = l.datanode_id
-            GROUP BY b.block_id
-            HAVING COUNT(*) FILTER (WHERE l.state = 'PLANNED' OR d.status <> 'DEAD') < ?
-            LIMIT 200""",
-            r -> new Missing(r.getObject(1, UUID.class), r.getLong(2), r.getString(3), r.getInt(4)),
-            replicationFactor);
-        if (missing.isEmpty()) return result;
-
-        List<Placement.Node> nodes = Placement.aliveNodes(c);
-        for (Missing block : missing) {
-          // Origen: una copia escrita en un nodo ALIVE (la menos cargada).
-          Source source = Db.one(c, """
-              SELECT d.datanode_id, d.internal_endpoint, d.node_name FROM block_location l
-              JOIN datanode d ON d.datanode_id = l.datanode_id
-              WHERE l.block_id = ? AND l.state = 'WRITTEN' AND d.status = 'ALIVE'
-              ORDER BY d.active_transfers LIMIT 1""",
-              r -> new Source(r.getString(1), r.getString(2), r.getString(3)), block.id());
-          if (source == null) continue;      // no hay ninguna copia viva de la cual copiar
-
-          Set<UUID> alreadyHaveIt = new HashSet<>(Db.query(c,
-              "SELECT datanode_id FROM block_location WHERE block_id = ? AND state <> 'DELETED'",
-              r -> r.getObject(1, UUID.class), block.id()));
-          for (Placement.Node target : placement.chooseReplicas(nodes, alreadyHaveIt, block.size(),
-              replicationFactor - block.copies())) {
-            // Si el nodo tuvo antes una copia borrada, la fila se reutiliza.
-            Db.update(c, """
-                INSERT INTO block_location(block_id, datanode_id, role) VALUES (?, ?, 'REPLICA')
-                ON CONFLICT (block_id, datanode_id) DO UPDATE
-                  SET role = 'REPLICA', state = 'PLANNED', created_at = now(), written_at = NULL""",
-                block.id(), target.id);
-            target.assign(block.size());
-            result.add(ReplicationTask.newBuilder()
-                .setBlockId(block.id().toString())
-                .setSourceDatanodeId(source.nodeId()).setSourceEndpoint(source.endpoint())
-                .setTargetDatanodeId(target.id.toString())
-                .setChecksumSha256(block.checksum()).setSizeBytes(block.size())
-                .setReadToken(tokens.issue(Tokens.READ, block.id().toString(), 600))
-                .build());
-            log.info("Réplica pedida: bloque {} de {} a {}", block.id(), source.name(), target.name);
-          }
-        }
-        return result;
-      });
-
-      for (ReplicationTask task : tasks) {     // cada tarea va a la cola del DataNode destino
+      for (ReplicationTask task : planReplication()) {
         rabbit.declareNodeQueues(task.getTargetDatanodeId());
         rabbit.publish(Rabbit.replicationKey(task.getTargetDatanodeId()), task.toByteArray(), true);
       }
     } catch (Exception e) {
       log.error("Falló el escaneo de réplicas: {}", e.toString());
     }
+  }
+
+  /** Planifica y reserva en una transacción; publicar las tareas es un paso separado. */
+  List<ReplicationTask> planReplication() throws SQLException {
+    return db.tx(c -> {
+      List<ReplicationTask> result = new ArrayList<>();
+      // El lock 2 elige al escáner. El lock de capacidad es el MISMO de AllocateFile.
+      if (!Db.one(c, "SELECT pg_try_advisory_xact_lock(2)", r -> r.getBoolean(1))) return result;
+      CapacityReservations.lock(c);
+
+      // Una réplica pedida hace más de 60 s que nunca llegó (nodo caído, tarea fallida) se reintenta.
+      Db.update(c, """
+          DELETE FROM block_location
+          WHERE role = 'REPLICA' AND state = 'PLANNED' AND created_at < now() - interval '60 seconds'""");
+
+      // Copias que cuentan: las PLANNED (en camino) y las WRITTEN en nodos que no estén DEAD.
+      List<Missing> missing = Db.query(c, """
+          SELECT b.block_id, b.size_bytes, b.checksum_sha256,
+                 COUNT(*) FILTER (WHERE l.state = 'PLANNED' OR d.status <> 'DEAD') AS copies
+          FROM dfs_block b
+          JOIN dfs_file f ON f.file_id = b.file_id AND f.status = 'COMMITTED'
+          JOIN block_location l ON l.block_id = b.block_id AND l.state <> 'DELETED'
+          JOIN datanode d ON d.datanode_id = l.datanode_id
+          GROUP BY b.block_id
+          HAVING COUNT(*) FILTER (WHERE l.state = 'PLANNED' OR d.status <> 'DEAD') < ?
+          LIMIT 200""",
+          r -> new Missing(r.getObject(1, UUID.class), r.getLong(2), r.getString(3), r.getInt(4)),
+          replicationFactor);
+      if (missing.isEmpty()) return result;
+
+      List<Placement.Node> nodes = Placement.aliveNodes(c);
+      for (Missing block : missing) {
+        // Origen: una copia escrita en un nodo ALIVE (la menos cargada).
+        Source source = Db.one(c, """
+            SELECT d.datanode_id, d.internal_endpoint, d.node_name FROM block_location l
+            JOIN datanode d ON d.datanode_id = l.datanode_id
+            WHERE l.block_id = ? AND l.state = 'WRITTEN' AND d.status = 'ALIVE'
+            ORDER BY d.active_transfers LIMIT 1""",
+            r -> new Source(r.getString(1), r.getString(2), r.getString(3)), block.id());
+        if (source == null) continue;      // no hay ninguna copia viva de la cual copiar
+
+        Set<UUID> alreadyHaveIt = new HashSet<>(Db.query(c,
+            "SELECT datanode_id FROM block_location WHERE block_id = ? AND state <> 'DELETED'",
+            r -> r.getObject(1, UUID.class), block.id()));
+        for (Placement.Node target : placement.chooseReplicas(nodes, alreadyHaveIt, block.size(),
+            replicationFactor - block.copies())) {
+          // Si el nodo tuvo antes una copia borrada, la fila se reutiliza.
+          Db.update(c, """
+              INSERT INTO block_location(block_id, datanode_id, role) VALUES (?, ?, 'REPLICA')
+              ON CONFLICT (block_id, datanode_id) DO UPDATE
+                SET role = 'REPLICA', state = 'PLANNED', created_at = now(), written_at = NULL""",
+              block.id(), target.id);
+          target.assign(block.size());
+          result.add(ReplicationTask.newBuilder()
+              .setBlockId(block.id().toString())
+              .setSourceDatanodeId(source.nodeId()).setSourceEndpoint(source.endpoint())
+              .setTargetDatanodeId(target.id.toString())
+              .setChecksumSha256(block.checksum()).setSizeBytes(block.size())
+              .setReadToken(tokens.issue(Tokens.READ, block.id().toString(), 600))
+              .build());
+          log.info("Réplica pedida: bloque {} de {} a {}", block.id(), source.name(), target.name);
+        }
+      }
+      return result;
+    });
   }
 
   private record Missing(UUID id, long size, String checksum, int copies) { }
