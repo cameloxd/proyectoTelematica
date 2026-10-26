@@ -6,8 +6,8 @@
 #   EXTRA_SAN="IP:3.80.1.2,DNS:mi-vm.compute.amazonaws.com" bash gen-secrets.sh
 set -euo pipefail
 export MSYS_NO_PATHCONV=1      # Git Bash en Windows: que no convierta "/CN=..." en una ruta
-mkdir -p secrets
-cd secrets
+mkdir -p "${DFSHA_SECRETS_DIR:-secrets}"
+cd "${DFSHA_SECRETS_DIR:-secrets}"
 
 # 1. Contraseñas y claves aleatorias (32 bytes en base64)
 random() { [ -f "$1" ] || { openssl rand -base64 32 | tr -d '\r\n' > "$1"; echo "creado $1"; }; }
@@ -27,6 +27,7 @@ fi
 if [ ! -f ca.crt ]; then
   SAN="DNS:localhost,IP:127.0.0.1,DNS:controlnode1,DNS:controlnode2"
   SAN="$SAN,DNS:datanode1,DNS:datanode2,DNS:datanode3,DNS:datanode4${EXTRA_SAN:+,$EXTRA_SAN}"
+  SAN="$SAN,DNS:postgres,DNS:postgres-standby,DNS:rabbitmq"
   openssl req -x509 -newkey rsa:2048 -nodes -days 365 -subj "/CN=DFSha CA" -keyout ca.key -out ca.crt
   openssl req -newkey rsa:2048 -nodes -subj "/CN=dfsha-node" -keyout node.key -out node.csr
   printf "subjectAltName=%s\n" "$SAN" > node.ext
