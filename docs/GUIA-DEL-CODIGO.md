@@ -4,8 +4,10 @@ Esta guía sirve para entender, explicar y modificar todo el proyecto. Se lee en
 el mapa (sección 1), los flujos (2), los archivos (3), cómo cambiar cosas (4), las decisiones de
 diseño (5) y las preguntas típicas de la sustentación (6).
 
-Cada archivo Java es de **un solo integrante**, así cada uno explica lo suyo. Los comentarios
-del código dicen el *porqué* de cada parte; esta guía dice *dónde está* cada cosa.
+Cada capacidad tiene un punto de implementación. El reparto de abajo indica responsables de revisión
+y explicación, no autoría exclusiva ni permiso para crear versiones paralelas por fase. Los comentarios
+dicen el *porqué*; esta guía dice *dónde*. El inventario de tareas y evidencia vive únicamente en
+[ESTADO-DEL-PROYECTO.md](ESTADO-DEL-PROYECTO.md); los comandos de prueba, en [PRUEBAS.md](PRUEBAS.md).
 
 ---
 
@@ -47,7 +49,7 @@ Hay tres ideas clave:
 | **Camilo** (ControlNode) | `deploy/schema.sql`, `common/Tokens`, todo `dfsha-controlnode` (en `ClusterMonitor`, la sección 3: réplicas) |
 | **Mendel** (cliente y DataNode) | `client/ClientMain`, `client/DfsClient`, `datanode/BlockStore`, `datanode/DataNodeServiceImpl`, `datanode/Replicator`, `datanode/DataNodeMain` |
 
-### Los 20 archivos
+### Archivos de la implementación
 
 ```text
 dfsha-proto/src/main/proto/dfsha.proto      el contrato: mensajes y servicios gRPC
@@ -64,6 +66,7 @@ dfsha-controlnode/                          servidor de metadatos
   NodeRegistryImpl.java    lo que dicen los DataNodes: registro y "ya guardé el bloque"
   ClusterMonitor.java      tareas de fondo: heartbeats, ALIVE/SUSPECT/DEAD, réplicas
   Placement.java           en qué DataNode va cada bloque (heurística 60/25/15)
+  CapacityReservations.java candado común para reservas primarias y de réplicas
   Db.java                  pool de PostgreSQL y ayudas para SQL
   Passwords.java           hash de contraseñas con PBKDF2
 dfsha-datanode/                             servidor de bloques
@@ -146,7 +149,8 @@ Cliente                         ControlNode                       DataNode
 ### 2.4 Réplicas (después del commit, sin que el usuario espere)
 
 1. Cada 5 s corre `ClusterMonitor.replicateMissingCopies`, en un solo ControlNode a la vez
-   (`pg_try_advisory_xact_lock(2)`):
+   (`pg_try_advisory_xact_lock(2)`). `planReplication` adquiere además `CapacityReservations`
+   antes de consultar capacidad: es el mismo candado que usa AllocateFile, no otra política de reservas.
    1. Borra las réplicas PLANNED de hace más de 60 s, para reintentarlas.
    2. Busca los bloques de archivos COMMITTED con menos de `REPLICATION_FACTOR` copias. Cuentan
       las PLANNED y las WRITTEN en nodos que no estén DEAD.
@@ -274,7 +278,10 @@ Maven genera las clases Java en `co.eafit.dfsha.grpc.v1` (`ControlServiceGrpc`, 
   - Sección 1, `onHeartbeat` (consumidor de RabbitMQ).
   - Sección 2, `updateNodeStatus`: `UPDATE ... RETURNING node_name` para loguear los cambios de
     estado.
-  - Sección 3, `replicateMissingCopies` (ver 2.4).
+  - Sección 3: `planReplication` calcula y reserva en PostgreSQL; `replicateMissingCopies`
+    publica las tareas resultantes. No hay un segundo planificador en el DataNode.
+- **`CapacityReservations`**: único acceso al candado de capacidad, compartido por AllocateFile
+  y el planificador de réplicas. El candado 2 solo elige al escáner; no sustituye este candado.
 - **`Placement`**:
   - `aliveNodes` calcula el espacio disponible como capacidad menos los bloques PLANNED y WRITTEN
     ya asignados.
@@ -296,8 +303,8 @@ Maven genera las clases Java en `co.eafit.dfsha.grpc.v1` (`ControlServiceGrpc`, 
   - Los tres validan el token con `tokens.verify(token, TIPO)` y comparan contra el `block_id`.
 - **`BlockStore`**: AES-256-GCM. El archivo guarda el IV (12 bytes) seguido del cifrado y la
   etiqueta. El `block_id` va como dato asociado y se escribe `.tmp` con `SYNC` antes de renombrar
-  (`ATOMIC_MOVE`). `file()` exige que el `block_id` sea un UUID, para que nadie pueda salirse de la
-  carpeta.
+  (`ATOMIC_MOVE`). `save` valida el UUID con `file()` antes de cifrar o crear el temporal, igual
+  que las otras operaciones de almacenamiento.
 - **`ControlLink`**: `register` reintenta cada 3 s. `start` consume las colas, `sendHeartbeat`
   publica la capacidad, lo libre, las transferencias en curso y los bloques, y `reportStored`
   avisa cada bloque guardado.
@@ -315,7 +322,7 @@ Maven genera las clases Java en `co.eafit.dfsha.grpc.v1` (`ControlServiceGrpc`, 
 | Archivo | Para qué |
 |---|---|
 | `schema.sql` | Tablas. La clave es `block_location`: una fila por (bloque, nodo) con su rol y estado. |
-| `docker-compose.yml` | PostgreSQL primario y standby, RabbitMQ, 2 ControlNodes y 4 DataNodes. Todo con TLS. |
+| `docker-compose.yml` | PostgreSQL primario y standby, RabbitMQ, 2 ControlNodes y 4 DataNodes. TLS configurado en gRPC, no en AMQP/SQL. |
 | `Dockerfile` | Compila con Maven y deja una imagen con los 3 jars. |
 | `gen-secrets.sh` | Contraseñas, clave AES, claves Ed25519, CA y certificado TLS. |
 | `postgres/init-replication.sh` | Crea el usuario `replicator` en el primario. |
@@ -365,10 +372,10 @@ JOIN datanode d USING (datanode_id) WHERE f.status = 'COMMITTED' ORDER BY 1, 2, 
 | Réplicas | Asíncronas, por evento. Factor configurable (3). Nunca dos copias en el mismo nodo (llave primaria `(block_id, datanode_id)`). | Es lo que hace HDFS. Con 4 nodos y factor 3 se puede reponer una copia si cae un nodo. |
 | Copia de una réplica | El destino jala el bloque del origen con `ReadBlock`. | Reutiliza el rpc del cliente; no hay rpc nuevo. |
 | Reposición | El mismo escaneo periódico (5 s) sirve para archivos nuevos y para nodos caídos. | Un solo mecanismo es más simple y más fácil de probar. |
-| Consistencia | **Eventual**, aceptada: entre el commit y la última réplica hay una ventana. Mientras tanto se lee de la primaria (solo aparecen copias WRITTEN). | Los archivos no se modifican (WORM): cada bloque es inmutable y su SHA-256 lo fija la primera copia. |
-| Metadatos | Fuerte: transacciones de PostgreSQL. `pg_advisory_xact_lock` serializa las asignaciones y el escaneo. | Dos ControlNodes activos no se pisan. |
+| Consistencia | Replicación eventual: entre el commit y la última réplica hay una ventana. Solo se leen copias WRITTEN. | La API del cliente es WORM; falta proteger y probar la inmutabilidad del almacenamiento ante reenvíos distintos. |
+| Metadatos | Transacciones de PostgreSQL y `CapacityReservations` común a primarias y réplicas. | Las reservas se serializan; el lock de elección del escáner tiene una función distinta. |
 | HA del ControlNode | Dos ControlNodes activos y sin estado. Failover en el cliente y en los DataNodes. | No hace falta elegir líder: el estado está en PostgreSQL. |
-| HA de PostgreSQL | Primario y standby con streaming replication. Promoción manual asistida (`promote-standby.sh`). | Es lo más simple que no pierde datos confirmados. La promoción automática queda como trabajo futuro. |
+| HA de PostgreSQL | Primario y standby con streaming replication asíncrona y promoción manual asistida. | Puede haber cambios recientes aún no replicados: no se garantiza pérdida cero. La promoción automática no está implementada. |
 | Nodo que vuelve | Conserva su id (upsert por nombre) y sus bloques. Si sobra una copia, no se borra. | No necesita block report. Una copia de más no daña nada. |
 | Seguridad en tránsito | TLS en todos los gRPC con una CA propia. | RNF6. Sin TLS, el cliente no conecta. |
 | Seguridad en reposo | AES-256-GCM por bloque con IV aleatorio. La clave es la misma en todos los DataNodes (secret). | Cualquier nodo puede servir una réplica. GCM además detecta bloques alterados. |
@@ -384,6 +391,10 @@ JOIN datanode d USING (datanode_id) WHERE f.status = 'COMMITTED' ORDER BY 1, 2, 
 - No hay mTLS, ACL por grupos, 2FA ni API keys.
 - No hay rebalanceo ni decommission.
 - `write()` parcial no existe: los archivos son WORM y se reemplazan con `rm` + `put`.
+
+Los riesgos y criterios pendientes, incluidos los borrados ante fallos del broker y los reenvíos de
+bloques distintos, se mantienen en [ESTADO-DEL-PROYECTO.md](ESTADO-DEL-PROYECTO.md). No interpretar
+esta descripción del diseño como evidencia de ejecución de los escenarios.
 
 ---
 
@@ -419,7 +430,7 @@ JOIN datanode d USING (datanode_id) WHERE f.status = 'COMMITTED' ORDER BY 1, 2, 
 ## 7. Cómo correr y probar
 
 ```bash
-# Pruebas unitarias (21) y jars
+# Pruebas unitarias y jars; integración PostgreSQL según PRUEBAS.md
 mvn -q package                       # genera dfsha-*/target/dfsha-*.jar
 
 # Clúster completo

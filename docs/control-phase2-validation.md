@@ -1,5 +1,7 @@
 # Validación de C2.1/C2.2 con PostgreSQL
 
+> Registro histórico de la validación del ControlNode y del commit `18a9fe2`. Los resultados pertenecen a esa revisión; para el estado posterior de todos los módulos consultar [ESTADO-DEL-PROYECTO.md](ESTADO-DEL-PROYECTO.md) y para ejecutar las pruebas, [PRUEBAS.md](PRUEBAS.md).
+
 Base de estas pruebas: `develop` en `8ed725c` (PR #9). No se reutilizan las clases ni el esquema de la implementación anterior.
 
 ## Qué prueban
