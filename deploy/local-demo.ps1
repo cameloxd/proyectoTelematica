@@ -1,6 +1,9 @@
 # Ejecutar desde PowerShell del usuario (Docker Desktop abierto): .\deploy\local-demo.ps1
 # No borra volumenes, no promueve PostgreSQL y solo elimina el archivo del usuario de demo.
-param([ValidatePattern('^[a-z0-9][a-z0-9-]+$')][string]$ProjectName = ('dfsha-demo-' + (Get-Date -Format yyyyMMddHHmmss)))
+param(
+    [ValidatePattern('^dfsha-demo-[a-z0-9-]+$')][string]$ProjectName = ('dfsha-demo-' + (Get-Date -Format yyyyMMddHHmmss)),
+    [switch]$Resume
+)
 $ErrorActionPreference = 'Stop'
 $taskRepo = Split-Path -Parent $PSScriptRoot
 $taskPreviousLocation = Get-Location
@@ -10,6 +13,7 @@ $taskBash = Join-Path $env:ProgramFiles 'Git\bin\bash.exe'
 $taskRoot = Join-Path $PSScriptRoot '.demo'
 $taskBuild = Join-Path $taskRoot 'build'
 $taskRun = Join-Path $taskRoot $ProjectName
+if ($Resume) { $taskRun = Join-Path $taskRoot ($ProjectName + '-resume-' + (Get-Date -Format HHmmss)) }
 $taskCompose = @('compose', '-p', $ProjectName, '-f', (Join-Path $PSScriptRoot 'docker-compose.yml'),
     '-f', (Join-Path $PSScriptRoot 'docker-compose.local-demo.yml'))
 $taskEnv = @{ POSTGRES_PORT='55433'; RABBITMQ_AMQP_PORT='5673'; ADVERTISE_HOST='localhost';
@@ -64,15 +68,17 @@ try {
     & $taskDocker info --format '{{.ServerVersion}}'
     if ($LASTEXITCODE -ne 0) { throw 'Docker Engine no esta accesible desde esta terminal' }
     $existing = & $taskDocker volume ls --filter ('label=com.docker.compose.project=' + $ProjectName) --format '{{.Name}}'
-    if ($LASTEXITCODE -ne 0 -or $existing) { throw 'El nombre elegido ya tiene volumenes o no pudo comprobarse. Elegir un ProjectName nuevo; no se borrara nada.' }
-    foreach ($port in @(50051,50052,50061,50062,50063,50064,55433,5673,15672)) {
+    if ($LASTEXITCODE -ne 0) { throw 'No pudo comprobarse el proyecto Docker; no se continua' }
+    if ($existing -and -not $Resume) { throw 'El proyecto ya tiene volumenes. Usar -Resume solo para esta demo conocida; no se borrara nada.' }
+    if ($Resume -and -not $existing) { throw 'No hay volumenes de esta demo para reanudar' }
+    if (-not $Resume) { foreach ($port in @(50051,50052,50061,50062,50063,50064,55433,5673,15672)) {
         $probe = New-Object System.Net.Sockets.TcpClient
         try {
             $connect = $probe.ConnectAsync('127.0.0.1', $port)
             try { [void]$connect.Wait(300) } catch { }
             if ($probe.Connected) { throw "El puerto $port ya esta ocupado. No se detendra ningun servicio ajeno." }
         } finally { $probe.Dispose() }
-    }
+    } }
     foreach ($name in $taskEnv.Keys) {
         $taskSavedEnv[$name] = [Environment]::GetEnvironmentVariable($name, 'Process')
         [Environment]::SetEnvironmentVariable($name, $taskEnv[$name], 'Process')

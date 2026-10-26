@@ -10,7 +10,7 @@ mkdir -p secrets
 cd secrets
 
 # 1. Contraseñas y claves aleatorias (32 bytes en base64)
-random() { [ -f "$1" ] || { openssl rand -base64 32 | tr -d '\n' > "$1"; echo "creado $1"; }; }
+random() { [ -f "$1" ] || { openssl rand -base64 32 | tr -d '\r\n' > "$1"; echo "creado $1"; }; }
 random postgres_password.txt
 random rabbitmq_password.txt
 random cluster_registration_key.txt     # para que solo DataNodes del clúster se registren

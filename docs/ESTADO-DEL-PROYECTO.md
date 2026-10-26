@@ -1,8 +1,8 @@
 # Estado vigente de DFSha
 
-Actualización: 2026-10-25. Alcance: recuperación de publicación de borrados, en la rama local `fix/control-delete-outbox`.
+Actualización: 2026-10-25, 23:55 America/Bogota. Alcance: outbox de borrados y demostración local básica en `chore/local-demo`.
 
-La base integrada es el PR #10 (`develop`, `cb67cf0`), que consolida las cuatro correcciones/documentación sobre el PR #9. La outbox descrita abajo es posterior y local: requiere publicación, revisión e integración propias. No confundir los cambios integrados con los de esta nueva rama.
+La base integrada es el PR #10 (`develop`, `cb67cf0`), que consolida las cuatro correcciones/documentación sobre el PR #9. La outbox posterior está publicada en `fix/control-delete-outbox` (`ccd6966`) y aún requiere PR/revisión/integración propios. La preparación y correcciones de la demo viven en `chore/local-demo`. No confundir las ramas con los cambios ya integrados a develop.
 
 ## Regla de trabajo: una capacidad, una implementación
 
@@ -73,15 +73,21 @@ En `fix/control-delete-outbox`, la pasada final de Maven `package` aprobó **69 
 
 Se verificó la transacción de borrado/tarea, rollback SQL, transporte fallido con espera persistida, recuperación mediante otra instancia del trabajador, reparto con filas bloqueadas, recuperación de borrados antiguos y reejecución segura de la migración. Un fallo SQL simulado después de la confirmación del transporte verifica que se puede reenviar, en lugar de perder una tarea. Otro caso inicia y detiene el trabajador programado; no equivale a matar/reiniciar procesos ControlNode reales.
 
-Los cuatro casos AMQP usan un canal simulado (retorno sin ruta, timeout, nack y envío confirmado). El caso nuevo de almacenamiento comprueba un borrado duplicado con dos UUID distintos. **No se usó un broker real ni se ejecutó una eliminación distribuida.** Docker Compose validó su configuración, pero Docker Engine no estaba disponible.
+Los cuatro casos AMQP de esa batería usan un canal simulado (retorno sin ruta, timeout, nack y envío confirmado). El caso nuevo de almacenamiento comprueba un borrado duplicado con dos UUID distintos. En esa pasada Maven no se usó un broker real ni se ejecutó una eliminación distribuida; posteriormente sí se ejecutó la demo básica real descrita abajo.
 
 Se conserva el mismo límite de entorno: JDK 24/release 17 y contrato previamente generado/verificado, sin `clean` ni cambios al proto. Se generaron los tres jars y se detuvo el PostgreSQL temporal. La migración se ejecutó únicamente en esquemas aislados de prueba; no se aplicó a una base existente del proyecto. Hay reportes antiguos en `target`: el recuento anterior solo incluye las clases ejecutadas en esta pasada, no archivos históricos.
+
+## Demo básica local completada (23:55 America/Bogota)
+
+En Docker Desktop, proyecto `dfsha-demo-20261025233922`, se registraron cuatro DataNodes y se ejecutaron put/get de 20 MiB con SHA-256 idéntico, lectura parcial, lock/unlock y borrado. Los 20 MiB se dividieron en tres bloques, cada uno con al menos tres copias WRITTEN/ALIVE. Se comprobó publicación de las tareas de borrado y ausencia física de esos bloques en los cuatro DataNodes. Esto usa RabbitMQ y PostgreSQL reales, pero no demuestra recuperación ante caída del broker ni otros fallos.
+
+Se corrigió un CR final de los secretos generados en Windows: Java lo eliminaba y los scripts conservaban una contraseña distinta. Se sincronizaron únicamente los usuarios de aplicación del clúster existente; no se borraron volúmenes ni se promovió el standby. Detalle, hashes y ubicación del recibo: [DEMO-LOCAL.md](DEMO-LOCAL.md). El clúster quedó encendido. No hay despliegue en nube ni certificación completa.
 
 ## Pendientes reales antes de cerrar el despliegue
 
 No confundir esta limpieza con una certificación de producción:
 
-- Probar el cliente actual: put/get de 20 MiB con SHA-256 idéntico, tres DataNodes y fallos durante transferencias.
+- Ampliar la demo aprobada del cliente con fallos durante transferencias y pruebas automáticas propias; el put/get básico y el factor tres ya fueron comprobados localmente.
 - Ejecutar y conservar resultados de los siete escenarios en un clúster de pruebas autorizado; todavía no se ejecutaron en esta consolidación.
 - Revisar/integrar esta outbox y comprobar una caída/recuperación real de RabbitMQ. Resolver por separado los fallos del consumidor/DLQ y las escrituras/réplicas en vuelo que lleguen después de un borrado. La outbox confirma entrega al broker, no eliminación física.
 - Proteger la inmutabilidad ante reenvíos con datos distintos: `BlockStore.save` todavía puede reemplazar un bloque antes de que el ControlNode rechace el checksum.
