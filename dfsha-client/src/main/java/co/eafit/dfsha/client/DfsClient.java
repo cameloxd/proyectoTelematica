@@ -42,6 +42,8 @@ import java.nio.file.StandardCopyOption;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
+import java.util.Arrays;
 import java.util.UUID;
 import java.util.concurrent.Callable;
 import java.util.concurrent.CompletableFuture;
@@ -72,6 +74,7 @@ public final class DfsClient implements AutoCloseable {
   private volatile String sessionToken;
   private final Rpc.Failover controlNodes;
   private final Map<String, ManagedChannel> dataNodes = new ConcurrentHashMap<>();
+  private final Set<RemoteFile> handles = ConcurrentHashMap.newKeySet();
   private final ExecutorService pool = Executors.newFixedThreadPool(Env.getInt("CLIENT_PARALLELISM", 4));
 
   public DfsClient(List<String> controlNodeEndpoints) {
@@ -90,6 +93,7 @@ public final class DfsClient implements AutoCloseable {
   }
 
   public void login(String user, String password) {
+    if (!handles.isEmpty()) throw new IllegalStateException("cierra los archivos abiertos antes de cambiar de usuario");
     sessionToken = control(s -> s.login(LoginRequest.newBuilder().setUsername(user).setPassword(password).build()))
         .getAccessToken();
   }
@@ -111,10 +115,15 @@ public final class DfsClient implements AutoCloseable {
 
   /** AllocateFile -> WriteBlock en paralelo (un stream por bloque) -> CommitFile. */
   public void put(Path local, String remote) throws Exception {
-    long size = Files.size(local);
     String operationId = UUID.randomUUID().toString();     // si reintentamos, el ControlNode da el mismo plan
+    putVersion(local, remote, operationId, "", "");
+  }
+
+  private void putVersion(Path local, String remote, String operationId, String replaces, String lease) throws Exception {
+    long size = Files.size(local);
     AllocateFileResponse plan = control(s -> s.allocateFile(AllocateFileRequest.newBuilder()
-        .setPath(remote).setFileSizeBytes(size).setOperationId(operationId).build()));
+        .setPath(remote).setFileSizeBytes(size).setOperationId(operationId)
+        .setReplacesFileId(replaces).setLockToken(lease).build()));
 
     List<Callable<Void>> uploads = new ArrayList<>();
     for (BlockPlan block : plan.getBlocksList()) uploads.add(() -> writeBlock(local, block));
@@ -171,7 +180,10 @@ public final class DfsClient implements AutoCloseable {
 
   /** GetFileManifest -> ReadBlock en paralelo con failover -> verificar SHA-256 -> escribir cada bloque en su offset. */
   public void get(String remote, Path local) throws Exception {
-    FileManifest manifest = manifest(remote);
+    download(manifest(remote), local);
+  }
+
+  private void download(FileManifest manifest, Path local) throws Exception {
     Path partial = local.resolveSibling(local.getFileName() + ".part");
     try (FileChannel out = FileChannel.open(partial, CREATE, WRITE, TRUNCATE_EXISTING)) {
       List<Callable<Void>> downloads = new ArrayList<>();
@@ -190,6 +202,7 @@ public final class DfsClient implements AutoCloseable {
 
   /** Lectura parcial (RF3: read): trae solo los pedazos de bloque que tocan [offset, offset + length). */
   public byte[] read(String remote, long offset, int length) {
+    requireRange(offset, length);
     FileManifest manifest = manifest(remote);
     long end = Math.min(offset + length, manifest.getFileSizeBytes());
     ByteArrayOutputStream result = new ByteArrayOutputStream();
@@ -251,6 +264,94 @@ public final class DfsClient implements AutoCloseable {
     control(s -> s.releaseLock(LockRef.newBuilder().setLockId(lockId).build()));
   }
 
+  /** RF3: instantanea local verificable; rw publica una version copy-on-write SOLO en close(). */
+  public RemoteFile open(String path, String mode) throws Exception {
+    if (!mode.equals("r") && !mode.equals("rw")) throw new IllegalArgumentException("modo: r o rw");
+    String lease = "";
+    Path cache = null;
+    try {
+      if (mode.equals("rw")) lease = lock(path, 600).getLockId();
+      FileManifest snapshot = manifest(path);
+      cache = Files.createTempFile("dfsha-open-", ".cache");
+      download(snapshot, cache);
+      RemoteFile handle = new RemoteFile(path, snapshot.getFile().getFileId(), lease, cache, mode.equals("rw"));
+      handles.add(handle);
+      return handle;
+    } catch (Exception e) {
+      if (cache != null) {
+        try { Files.deleteIfExists(cache); Files.deleteIfExists(cache.resolveSibling(cache.getFileName() + ".part")); }
+        catch (Exception cleanup) { e.addSuppressed(cleanup); }
+      }
+      if (!lease.isEmpty()) try { unlock(lease); } catch (Exception cleanup) { e.addSuppressed(cleanup); }
+      throw e;
+    }
+  }
+
+  private static void requireRange(long offset, int length) {
+    if (offset < 0 || length < 0 || length > 64 * 1024 * 1024 || offset > Long.MAX_VALUE - length) {
+      throw new IllegalArgumentException("rango invalido (maximo 64 MiB por llamada)");
+    }
+  }
+
+  public final class RemoteFile implements AutoCloseable {
+    private final String path, version, lease;
+    private final String operation = UUID.randomUUID().toString();
+    private final Path cache;
+    private final FileChannel file;
+    private final boolean writable;
+    private boolean dirty, closed;
+
+    private RemoteFile(String path, String version, String lease, Path cache, boolean writable) throws IOException {
+      this.path = path; this.version = version; this.lease = lease; this.cache = cache; this.writable = writable;
+      this.file = FileChannel.open(cache, READ, WRITE);
+    }
+
+    private void checkOpen() { if (closed) throw new IllegalStateException("archivo cerrado"); }
+
+    public synchronized long size() throws IOException { checkOpen(); return file.size(); }
+
+    public synchronized byte[] read(long offset, int length) throws IOException {
+      checkOpen(); requireRange(offset, length);
+      int available = (int) Math.min(length, Math.max(0, file.size() - offset));
+      ByteBuffer data = ByteBuffer.allocate(available);
+      while (data.hasRemaining()) { if (file.read(data, offset + data.position()) < 0) break; }
+      return Arrays.copyOf(data.array(), data.position());
+    }
+
+    public synchronized void write(long offset, byte[] bytes) throws IOException {
+      checkOpen();
+      if (!writable) throw new IllegalStateException("archivo abierto solo para lectura");
+      requireRange(offset, bytes.length);
+      ByteBuffer data = ByteBuffer.wrap(bytes);
+      while (data.hasRemaining()) offset += file.write(data, offset);
+      if (bytes.length > 0) dirty = true;
+    }
+
+    @Override public synchronized void close() throws Exception {
+      if (closed) return;
+      if (dirty) {
+        file.force(true);
+        // Lease y version se vuelven a verificar en AllocateFile y CommitFile, no solo al abrir.
+        putVersion(cache, path, operation, version, lease);
+        dirty = false;
+      }
+      dispose();
+    }
+
+    /** Descarta cambios no confirmados; no publica una version. */
+    public synchronized void abort() throws Exception { if (!closed) dispose(); }
+
+    private void dispose() throws Exception {
+      closed = true;
+      handles.remove(this);
+      try { file.close(); }
+      finally {
+        try { Files.deleteIfExists(cache); }
+        finally { if (!lease.isEmpty()) unlock(lease); }
+      }
+    }
+  }
+
   // =================================================================== ayudas
 
   /** Un canal por DataNode, reutilizado entre bloques. */
@@ -284,6 +385,9 @@ public final class DfsClient implements AutoCloseable {
 
   @Override
   public void close() {
+    for (RemoteFile handle : List.copyOf(handles)) {
+      try { handle.abort(); } catch (Exception e) { log.warn("No pude liberar un archivo abierto: {}", e.getClass().getSimpleName()); }
+    }
     pool.shutdownNow();
     controlNodes.close();
     dataNodes.values().forEach(ManagedChannel::shutdownNow);

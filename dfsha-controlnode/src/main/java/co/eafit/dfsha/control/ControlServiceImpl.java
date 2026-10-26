@@ -35,6 +35,7 @@ import java.sql.SQLException;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.UUID;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -142,7 +143,7 @@ public final class ControlServiceImpl extends ControlServiceGrpc.ControlServiceI
         // Mismo orden que AllocateFile: capacidad -> namespace. Incluye réplicas ya planificadas.
         CapacityReservations.lock(c);
         lockNamespace(c, owner);
-        UUID fileId = Db.one(c, "SELECT file_id FROM dfs_file WHERE owner_id = ? AND path = ? AND status <> 'DELETED'",
+        UUID fileId = Db.one(c, "SELECT file_id FROM dfs_file WHERE owner_id = ? AND path = ? AND status <> 'DELETED' ORDER BY status = 'COMMITTED' DESC LIMIT 1",
             r -> r.getObject(1, UUID.class), owner, path);
         if (fileId == null) {
           deleteEmptyDirectory(c, owner, path);
@@ -152,7 +153,9 @@ public final class ControlServiceImpl extends ControlServiceGrpc.ControlServiceI
           throw Rpc.error(FAILED_PRECONDITION, "el archivo tiene lock: haz unlock o espera a que venza");
         }
         Db.update(c, "UPDATE dfs_file SET status = 'DELETED', deleted_at = now() WHERE file_id = ?", fileId);
-        return DeleteOutbox.enqueueFile(c, fileId);
+        int tasks = DeleteOutbox.enqueueFile(c, fileId);
+        abortPending(c, owner, path);
+        return tasks;
       });
       if (queued == null) return Rpc.ok("directorio borrado: " + path);
       log.info("Borrado lógico {}: {} tareas persistidas para publicación", path, queued);
@@ -185,6 +188,9 @@ public final class ControlServiceImpl extends ControlServiceGrpc.ControlServiceI
       String path = DfsPaths.resolve("/", req.getPath());
       long size = req.getFileSizeBytes();
       String operationId = req.getOperationId();
+      UUID replaces = req.getReplacesFileId().isEmpty() ? null : uuid(req.getReplacesFileId());
+      UUID lease = req.getLockToken().isEmpty() ? null : uuid(req.getLockToken());
+      if ((replaces == null) != (lease == null)) throw Rpc.error(INVALID_ARGUMENT, "reemplazo exige version y lock_token");
       if (path.equals("/") || size < 0 || operationId.isBlank() || operationId.length() > 80) {
         throw Rpc.error(INVALID_ARGUMENT, "path, tamaño u operation_id inválido");
       }
@@ -194,15 +200,17 @@ public final class ControlServiceImpl extends ControlServiceGrpc.ControlServiceI
         CapacityReservations.lock(c);
         lockNamespace(c, owner);
         // 1. Idempotencia: si el cliente reintenta con el mismo operation_id, recibe el mismo plan.
-        UploadRow previous = Db.one(c, "SELECT file_id, path, size_bytes, status::text FROM dfs_file WHERE owner_id = ? AND operation_id = ?",
-            r -> new UploadRow(r.getObject(1, UUID.class), r.getString(2), r.getLong(3), r.getString(4)), owner, operationId);
+        UploadRow previous = Db.one(c, "SELECT file_id, path, size_bytes, status::text, replaces_file_id, replacement_lock_token FROM dfs_file WHERE owner_id = ? AND operation_id = ?",
+            UploadRow::read, owner, operationId);
         if (previous != null) {
           if (previous.status().equals("DELETED")) {
             throw Rpc.error(FAILED_PRECONDITION, "esa operación fue eliminada o reemplazada; usa un operation_id nuevo");
           }
-          if (!previous.path().equals(path) || previous.size() != size) {
+          if (!previous.path().equals(path) || previous.size() != size
+              || !Objects.equals(previous.replaces(), replaces) || !Objects.equals(previous.lease(), lease)) {
             throw Rpc.error(FAILED_PRECONDITION, "ese operation_id ya se usó con otro archivo");
           }
+          if (replaces != null && previous.status().equals("PENDING")) requireReplacementLease(c, owner, path, replaces, lease);
           return uploadPlan(c, previous.id(), path);
         }
 
@@ -212,23 +220,19 @@ public final class ControlServiceImpl extends ControlServiceGrpc.ControlServiceI
             r -> 1, owner, path) != null) {
           throw Rpc.error(ALREADY_EXISTS, path + " es un directorio");
         }
-        if (committedFile(c, owner, path) != null) {
+        if (replaces != null) {
+          requireReplacementLease(c, owner, path, replaces, lease);
+        } else if (committedFile(c, owner, path) != null) {
           throw Rpc.error(ALREADY_EXISTS, path + " ya existe (los archivos no se sobrescriben: haz rm primero)");
         }
         // Una subida anterior al mismo path que quedó a medias (PENDING) se descarta y libera su espacio.
-        Db.update(c, """
-            UPDATE block_location l SET state = 'DELETED'
-            FROM dfs_block b, dfs_file f
-            WHERE l.block_id = b.block_id AND b.file_id = f.file_id
-              AND f.owner_id = ? AND f.path = ? AND f.status = 'PENDING'""", owner, path);
-        Db.update(c, "UPDATE dfs_file SET status = 'DELETED', deleted_at = now() WHERE owner_id = ? AND path = ? AND status = 'PENDING'",
-            owner, path);
+        abortPending(c, owner, path);
 
         // 3. El lock adquirido al inicio también impide reservar el mismo espacio en dos subidas.
         UUID fileId = Db.one(c, """
-            INSERT INTO dfs_file(owner_id, path, size_bytes, block_size_bytes, operation_id)
-            VALUES (?, ?, ?, ?, ?) RETURNING file_id""",
-            r -> r.getObject(1, UUID.class), owner, path, size, blockSize, operationId);
+            INSERT INTO dfs_file(owner_id, path, size_bytes, block_size_bytes, operation_id, replaces_file_id, replacement_lock_token)
+            VALUES (?, ?, ?, ?, ?, ?, ?) RETURNING file_id""",
+            r -> r.getObject(1, UUID.class), owner, path, size, blockSize, operationId, replaces, lease);
 
         // 4. Bloques de BLOCK_SIZE_BYTES (el último puede ser más pequeño): 20 MiB = 8 + 8 + 4 MiB.
         List<Placement.Node> nodes = Placement.aliveNodes(c);
@@ -282,9 +286,13 @@ public final class ControlServiceImpl extends ControlServiceGrpc.ControlServiceI
       UUID owner = caller();
       UUID fileId = uuid(req.getFileId());
       return db.tx(c -> {
-        String status = Db.one(c, "SELECT status::text FROM dfs_file WHERE file_id = ? AND owner_id = ? FOR UPDATE",
-            r -> r.getString(1), fileId, owner);
-        if (status == null || status.equals("DELETED")) throw Rpc.error(NOT_FOUND, "archivo no encontrado");
+        CapacityReservations.lock(c);
+        lockNamespace(c, owner);
+        UploadRow upload = Db.one(c, "SELECT file_id, path, size_bytes, status::text, replaces_file_id, replacement_lock_token FROM dfs_file WHERE file_id = ? AND owner_id = ? FOR UPDATE",
+            UploadRow::read, fileId, owner);
+        if (upload == null || upload.status().equals("DELETED")) throw Rpc.error(NOT_FOUND, "archivo no encontrado");
+        if (upload.status().equals("COMMITTED")) return CommitFileResponse.newBuilder().setStatus(Rpc.ok("archivo confirmado")).build();
+        if (upload.replaces() != null) requireReplacementLease(c, owner, upload.path(), upload.replaces(), upload.lease());
         // Un bloque está listo cuando un DataNode confirmó tenerlo (ReportBlockStored -> WRITTEN).
         List<String> missing = Db.query(c, """
             SELECT b.block_id FROM dfs_block b
@@ -295,6 +303,10 @@ public final class ControlServiceImpl extends ControlServiceGrpc.ControlServiceI
           return CommitFileResponse.newBuilder()
               .setStatus(Status.newBuilder().setOk(false).setCode("MISSING_BLOCKS").setMessage("faltan bloques"))
               .addAllMissingBlockIds(missing).build();
+        }
+        if (upload.replaces() != null) {
+          Db.update(c, "UPDATE dfs_file SET status = 'DELETED', deleted_at = now() WHERE file_id = ?", upload.replaces());
+          DeleteOutbox.enqueueFile(c, upload.replaces());
         }
         Db.update(c, "UPDATE dfs_file SET status = 'COMMITTED', committed_at = now() WHERE file_id = ? AND status = 'PENDING'",
             fileId);
@@ -398,6 +410,20 @@ public final class ControlServiceImpl extends ControlServiceGrpc.ControlServiceI
 
   // =================================================================== ayudas
 
+  private static void requireReplacementLease(Connection c, UUID owner, String path, UUID version, UUID lease) throws SQLException {
+    if (!version.equals(committedFile(c, owner, path))) throw Rpc.error(FAILED_PRECONDITION, "la version abierta ya no es vigente");
+    if (Db.one(c, "SELECT 1 FROM file_lock WHERE file_id = ? AND owner_id = ? AND lock_token = ? AND expires_at > now() FOR UPDATE",
+        r -> 1, version, owner, lease) == null) throw Rpc.error(FAILED_PRECONDITION, "el lock de escritura no existe o vencio");
+  }
+
+  private static void abortPending(Connection c, UUID owner, String path) throws SQLException {
+    for (UUID stale : Db.query(c, "SELECT file_id FROM dfs_file WHERE owner_id = ? AND path = ? AND status = 'PENDING'",
+        r -> r.getObject(1, UUID.class), owner, path)) {
+      DeleteOutbox.enqueueFile(c, stale);
+      Db.update(c, "UPDATE dfs_file SET status = 'DELETED', deleted_at = now() WHERE file_id = ?", stale);
+    }
+  }
+
   /** El user_id de quien llama: lo puso el interceptor de autenticación al validar el token. */
   private static UUID caller() {
     return UUID.fromString(Rpc.USER_ID.get());
@@ -435,7 +461,12 @@ public final class ControlServiceImpl extends ControlServiceGrpc.ControlServiceI
 
   private record Copy(String blockId, String nodeId, String endpoint) { }
 
-  private record UploadRow(UUID id, String path, long size, String status) { }
+  private record UploadRow(UUID id, String path, long size, String status, UUID replaces, UUID lease) {
+    static UploadRow read(java.sql.ResultSet r) throws SQLException {
+      return new UploadRow(r.getObject(1, UUID.class), r.getString(2), r.getLong(3), r.getString(4),
+          r.getObject(5, UUID.class), r.getObject(6, UUID.class));
+    }
+  }
 
   private record FileRow(UUID id, String path, long size) {
     static FileRow read(java.sql.ResultSet r) throws SQLException {

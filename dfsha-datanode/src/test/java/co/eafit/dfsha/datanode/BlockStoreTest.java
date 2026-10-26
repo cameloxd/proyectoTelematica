@@ -77,4 +77,69 @@ class BlockStoreTest {
     assertEquals(1, storage.blockCount());
     assertArrayEquals(new byte[] {2}, storage.load(current));
   }
+
+  @Test
+  void reenvioIdenticoNoReescribeElBloque() throws Exception {
+    String id = UUID.randomUUID().toString();
+    var storage = store();
+    storage.save(id, new byte[] {1, 2});
+    byte[] encrypted = Files.readAllBytes(dir.resolve(id + ".blk"));
+    store().save(id, new byte[] {1, 2});
+    assertArrayEquals(encrypted, Files.readAllBytes(dir.resolve(id + ".blk")));
+  }
+
+  @Test
+  void reenvioDistintoNoPuedeCorromperUnaCopiaValida() throws Exception {
+    String id = UUID.randomUUID().toString();
+    var storage = store();
+    storage.save(id, new byte[] {1});
+    assertThrows(java.io.IOException.class, () -> store().save(id, new byte[] {2}));
+    assertArrayEquals(new byte[] {1}, storage.load(id));
+  }
+
+  @Test
+  void unBorradoPrevioBloqueaEscriturasTardiasInclusoTrasReiniciar() throws Exception {
+    String id = UUID.randomUUID().toString();
+    store().delete(id); // incluso una tarea que llega antes de la escritura
+    assertThrows(java.io.IOException.class, () -> store().save(id, new byte[] {1}));
+    assertThrows(NoSuchFileException.class, () -> store().load(id));
+    assertEquals(0, store().blockCount());
+  }
+
+  @Test
+  void escritoresConcurrentesNoReemplazanContenido() throws Exception {
+    String id = UUID.randomUUID().toString();
+    var executor = java.util.concurrent.Executors.newFixedThreadPool(2);
+    var barrier = new java.util.concurrent.CyclicBarrier(2);
+    try {
+      var futures = new java.util.ArrayList<java.util.concurrent.Future<Boolean>>();
+      for (byte value : new byte[] {1, 2}) futures.add(executor.submit(() -> {
+        barrier.await();
+        try { store().save(id, new byte[] {value}); return true; }
+        catch (java.io.IOException expected) { return false; }
+      }));
+      assertEquals(1, (futures.get(0).get() ? 1 : 0) + (futures.get(1).get() ? 1 : 0));
+      assertEquals(1, store().blockCount());
+    } finally { executor.shutdownNow(); }
+  }
+
+  @Test
+  void borrarContraUnaEscrituraConcurrenteSiempreDejaElBloqueEliminado() throws Exception {
+    var executor = java.util.concurrent.Executors.newFixedThreadPool(2);
+    try {
+      for (int i = 0; i < 10; i++) {
+        String id = UUID.randomUUID().toString();
+        var barrier = new java.util.concurrent.CyclicBarrier(2);
+        var write = executor.submit(() -> {
+          barrier.await();
+          try { store().save(id, new byte[] {1}); } catch (java.io.IOException deleted) { }
+          return null;
+        });
+        var delete = executor.submit(() -> { barrier.await(); store().delete(id); return null; });
+        write.get(); delete.get();
+        assertFalse(Files.exists(dir.resolve(id + ".blk")));
+        assertThrows(java.io.IOException.class, () -> store().save(id, new byte[] {1}));
+      }
+    } finally { executor.shutdownNow(); }
+  }
 }

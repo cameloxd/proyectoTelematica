@@ -55,7 +55,29 @@ final class DeleteOutbox {
   void start() throws SQLException {
     // Fallar antes de atender RPC si una base existente no recibió la migración.
     db.tx(c -> Db.query(c, "SELECT block_id FROM block_delete_outbox LIMIT 0", r -> 1));
+    db.tx(c -> Db.query(c, "SELECT replaces_file_id, replacement_lock_token FROM dfs_file LIMIT 0", r -> 1));
     timer.scheduleWithFixedDelay(this::publishPending, 0, 2, TimeUnit.SECONDS);
+    long pendingTtl = Env.getLong("PENDING_UPLOAD_TTL_SECONDS", 3600);
+    if (pendingTtl < 60) throw new IllegalArgumentException("PENDING_UPLOAD_TTL_SECONDS debe ser al menos 60");
+    timer.scheduleWithFixedDelay(() -> {
+      try { expireAbandoned(pendingTtl); }
+      catch (Exception e) { log.warn("No pude expirar subidas pendientes: {}", e.getClass().getSimpleName()); }
+    }, 30, 30, TimeUnit.SECONDS);
+  }
+
+  int expireAbandoned(long ageSeconds) throws SQLException {
+    if (ageSeconds < 1) throw new IllegalArgumentException("edad positiva requerida");
+    return db.tx(c -> {
+      CapacityReservations.lock(c);
+      var expired = Db.query(c, "SELECT file_id FROM dfs_file WHERE status = 'PENDING' "
+          + "AND created_at < now() - ? * interval '1 second' ORDER BY created_at LIMIT 100 FOR UPDATE SKIP LOCKED",
+          r -> r.getObject(1, UUID.class), ageSeconds);
+      for (UUID file : expired) {
+        enqueueFile(c, file);
+        Db.update(c, "UPDATE dfs_file SET status = 'DELETED', deleted_at = now() WHERE file_id = ?", file);
+      }
+      return expired.size();
+    });
   }
 
   void stop() {

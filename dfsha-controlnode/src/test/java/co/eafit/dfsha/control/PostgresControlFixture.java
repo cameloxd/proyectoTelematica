@@ -76,6 +76,7 @@ abstract class PostgresControlFixture {
       c.setSchema(schema);
       s.execute(Files.readString(Path.of("..", "deploy", "schema.sql")));
       s.execute(Files.readString(Path.of("..", "deploy", "migrations", "001-block-delete-outbox.sql")));
+      s.execute(Files.readString(Path.of("..", "deploy", "migrations", "002-file-versions.sql")));
     }
     HikariConfig config = new HikariConfig();
     config.setJdbcUrl(System.getenv("DFSHA_TEST_DB_URL"));
