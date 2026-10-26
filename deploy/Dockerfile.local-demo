@@ -1,0 +1,5 @@
+# Solo para la demo local: los JAR deben haber pasado mvn package antes.
+# local-demo.ps1 prepara un contexto aislado que contiene UNICAMENTE estos archivos.
+FROM eclipse-temurin:17-jre
+WORKDIR /app
+COPY dfsha-controlnode.jar dfsha-datanode.jar dfsha-client.jar ./

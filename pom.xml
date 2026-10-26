@@ -25,6 +25,10 @@
     <!-- 3.25.3 es la version de protobuf con la que gRPC 1.66.0 esta construido -->
     <protobuf.version>3.25.3</protobuf.version>
     <slf4j.version>2.0.16</slf4j.version>
+    <rabbitmq.version>5.21.0</rabbitmq.version>
+    <hikari.version>5.1.0</hikari.version>
+    <postgresql.version>42.7.4</postgresql.version>
+    <junit.version>5.10.2</junit.version>
   </properties>
 
   <dependencyManagement>
@@ -37,4 +41,59 @@
       </dependency>
     </dependencies>
   </dependencyManagement>
+
+  <!-- JUnit 5 para las pruebas de todos los modulos -->
+  <dependencies>
+    <dependency>
+      <groupId>org.junit.jupiter</groupId><artifactId>junit-jupiter</artifactId><version>${junit.version}</version><scope>test</scope>
+    </dependency>
+  </dependencies>
+
+  <build>
+    <plugins>
+      <plugin>
+        <groupId>org.apache.maven.plugins</groupId><artifactId>maven-surefire-plugin</artifactId><version>3.2.5</version>
+      </plugin>
+    </plugins>
+    <pluginManagement>
+      <plugins>
+        <!--
+          Jar ejecutable con todas las dependencias adentro: target/<modulo>.jar
+          Lo activan client, controlnode y datanode; cada uno define la propiedad main.class.
+        -->
+        <plugin>
+          <groupId>org.apache.maven.plugins</groupId>
+          <artifactId>maven-shade-plugin</artifactId>
+          <version>3.5.1</version>
+          <executions>
+            <execution>
+              <phase>package</phase>
+              <goals><goal>shade</goal></goals>
+              <configuration>
+                <finalName>${project.artifactId}</finalName>
+                <createDependencyReducedPom>false</createDependencyReducedPom>
+                <filters>
+                  <filter>
+                    <artifact>*:*</artifact>
+                    <excludes>
+                      <exclude>META-INF/*.SF</exclude>
+                      <exclude>META-INF/*.DSA</exclude>
+                      <exclude>META-INF/*.RSA</exclude>
+                    </excludes>
+                  </filter>
+                </filters>
+                <transformers>
+                  <!-- gRPC encuentra sus resolvedores y balanceadores en META-INF/services: hay que unirlos -->
+                  <transformer implementation="org.apache.maven.plugins.shade.resource.ServicesResourceTransformer"/>
+                  <transformer implementation="org.apache.maven.plugins.shade.resource.ManifestResourceTransformer">
+                    <mainClass>${main.class}</mainClass>
+                  </transformer>
+                </transformers>
+              </configuration>
+            </execution>
+          </executions>
+        </plugin>
+      </plugins>
+    </pluginManagement>
+  </build>
 </project>

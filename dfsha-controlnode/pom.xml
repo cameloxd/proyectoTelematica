@@ -7,10 +7,22 @@
     <groupId>co.eafit.dfsha</groupId><artifactId>dfsha-parent</artifactId><version>0.1.0-SNAPSHOT</version>
   </parent>
   <artifactId>dfsha-controlnode</artifactId>
-  <name>dfsha-controlnode</name>
+  <name>dfsha-controlnode (metadatos)</name>
+
+  <properties>
+    <main.class>co.eafit.dfsha.control.ControlNodeMain</main.class>
+  </properties>
 
   <dependencies>
     <dependency><groupId>co.eafit.dfsha</groupId><artifactId>dfsha-common</artifactId></dependency>
+    <dependency><groupId>com.zaxxer</groupId><artifactId>HikariCP</artifactId><version>${hikari.version}</version></dependency>
+    <dependency><groupId>org.postgresql</groupId><artifactId>postgresql</artifactId><version>${postgresql.version}</version></dependency>
   </dependencies>
-  <!-- TODO Fase 2 (Martin): empaquetado ejecutable (maven-shade-plugin) para Docker. -->
+
+  <build>
+    <plugins>
+      <!-- genera target/dfsha-controlnode.jar (ver pluginManagement en el pom padre) -->
+      <plugin><groupId>org.apache.maven.plugins</groupId><artifactId>maven-shade-plugin</artifactId></plugin>
+    </plugins>
+  </build>
 </project>

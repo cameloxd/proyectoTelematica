@@ -1,5 +1,7 @@
 # DFSha — Hito 2: cambios sobre el diseño original
 
+> Documento histórico. Sus comandos, esquema y estructura corresponden al diseño de Hito 2, no a la implementación vigente. No copiar desde aquí una segunda versión del contrato o de los servicios. Consultar [el índice vigente](README.md) y [el estado actual](ESTADO-DEL-PROYECTO.md).
+
 Versión corregida de `dfsha.proto`, `schema.sql` y `docker-compose.yml`, más las secciones del documento que cambian.
 
 ## Cómo arrancar

@@ -7,10 +7,14 @@
     <groupId>co.eafit.dfsha</groupId><artifactId>dfsha-parent</artifactId><version>0.1.0-SNAPSHOT</version>
   </parent>
   <artifactId>dfsha-common</artifactId>
-  <name>dfsha-common (gRPC, RabbitMQ, logging compartidos)</name>
+  <name>dfsha-common (gRPC, tokens, RabbitMQ)</name>
 
   <dependencies>
+    <!-- Trae gRPC y protobuf -->
     <dependency><groupId>co.eafit.dfsha</groupId><artifactId>dfsha-proto</artifactId></dependency>
+    <dependency><groupId>com.rabbitmq</groupId><artifactId>amqp-client</artifactId><version>${rabbitmq.version}</version></dependency>
+    <!-- Logs: slf4j-simple escribe una línea por evento en la consola (sin archivos de configuración XML) -->
+    <dependency><groupId>org.slf4j</groupId><artifactId>slf4j-api</artifactId><version>${slf4j.version}</version></dependency>
     <dependency><groupId>org.slf4j</groupId><artifactId>slf4j-simple</artifactId><version>${slf4j.version}</version></dependency>
   </dependencies>
 </project>

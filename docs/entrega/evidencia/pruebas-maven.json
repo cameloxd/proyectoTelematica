@@ -1,0 +1,139 @@
+{
+  "tests": 89,
+  "failures": 0,
+  "errors": 0,
+  "skipped": 0,
+  "postgresql_real": 49,
+  "entorno": "JDK24/release17; proto generado por usuario, fuentes reutilizadas verificadas; package sin clean",
+  "suites": [
+    {
+      "tests": 6,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "suite": "co.eafit.dfsha.client.FileAccessTest",
+      "xml": "dfsha-client/target/surefire-reports/TEST-co.eafit.dfsha.client.FileAccessTest.xml",
+      "sha256": "F1C571B574FD76E0864C536BABAF9088D9799C82A0C1088360483C9D089B7AEF"
+    },
+    {
+      "tests": 2,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "suite": "co.eafit.dfsha.common.DfsPathsTest",
+      "xml": "dfsha-common/target/surefire-reports/TEST-co.eafit.dfsha.common.DfsPathsTest.xml",
+      "sha256": "FBA616E72115EB0A6F45EF46B4384AFD64F5EFEE3E015F6F2991A5C8A08EB151"
+    },
+    {
+      "tests": 4,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "suite": "co.eafit.dfsha.common.RabbitDeletePublishTest",
+      "xml": "dfsha-common/target/surefire-reports/TEST-co.eafit.dfsha.common.RabbitDeletePublishTest.xml",
+      "sha256": "2A6E5484BC35C90ABB4738E5A989D9A6FC7D851F17A9DDC15B1A3911190C04F1"
+    },
+    {
+      "tests": 2,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "suite": "co.eafit.dfsha.common.RabbitTlsTest",
+      "xml": "dfsha-common/target/surefire-reports/TEST-co.eafit.dfsha.common.RabbitTlsTest.xml",
+      "sha256": "542DE00207C1CC1A1FBAB74E4105192F3923E45AB136D95BE82A57BB27FEF5C1"
+    },
+    {
+      "tests": 4,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "suite": "co.eafit.dfsha.common.RpcAuthTest",
+      "xml": "dfsha-common/target/surefire-reports/TEST-co.eafit.dfsha.common.RpcAuthTest.xml",
+      "sha256": "789D21A5A5C29150257047C9C912441D771D5DDEFE63532918EEADF2D133D108"
+    },
+    {
+      "tests": 5,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "suite": "co.eafit.dfsha.common.TokensTest",
+      "xml": "dfsha-common/target/surefire-reports/TEST-co.eafit.dfsha.common.TokensTest.xml",
+      "sha256": "0AC7435264C030E3E4FA3E470D870E8CD3FB7821E76015609F0E92372892B162"
+    },
+    {
+      "tests": 2,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "suite": "co.eafit.dfsha.control.ClusterMonitorPostgresTest",
+      "xml": "dfsha-controlnode/target/surefire-reports/TEST-co.eafit.dfsha.control.ClusterMonitorPostgresTest.xml",
+      "sha256": "F4CF9E07BBBB5EE3603F9C11B2A8B733E359A25D3205F48151B7148E32EE66EE"
+    },
+    {
+      "tests": 27,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "suite": "co.eafit.dfsha.control.ControlFileFlowPostgresTest",
+      "xml": "dfsha-controlnode/target/surefire-reports/TEST-co.eafit.dfsha.control.ControlFileFlowPostgresTest.xml",
+      "sha256": "8D5FA9719581F6A67945C30960020E13153478E2016AFBA678B2972A5BC80583"
+    },
+    {
+      "tests": 13,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "suite": "co.eafit.dfsha.control.DeleteOutboxPostgresTest",
+      "xml": "dfsha-controlnode/target/surefire-reports/TEST-co.eafit.dfsha.control.DeleteOutboxPostgresTest.xml",
+      "sha256": "1ED0597B571132A1B305774C264654174BA0AF04BED7D4EB458A7E0C6887556A"
+    },
+    {
+      "tests": 7,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "suite": "co.eafit.dfsha.control.FileVersionsPostgresTest",
+      "xml": "dfsha-controlnode/target/surefire-reports/TEST-co.eafit.dfsha.control.FileVersionsPostgresTest.xml",
+      "sha256": "322AB5C45094B2E1BD804BC71977CEB24CB8E24F5C5E54D530CC97C6836BAFEC"
+    },
+    {
+      "tests": 2,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "suite": "co.eafit.dfsha.control.PasswordsTest",
+      "xml": "dfsha-controlnode/target/surefire-reports/TEST-co.eafit.dfsha.control.PasswordsTest.xml",
+      "sha256": "1941C81005ECB3F1CA0D990F4B896ADFB100764027D8686F6E7034D179C38446"
+    },
+    {
+      "tests": 4,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "suite": "co.eafit.dfsha.control.PlacementTest",
+      "xml": "dfsha-controlnode/target/surefire-reports/TEST-co.eafit.dfsha.control.PlacementTest.xml",
+      "sha256": "D6AA4C67CE09830E72C27832A637DD6BA2E78F89320E5D77D081D8B5BA00C12E"
+    },
+    {
+      "tests": 11,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "suite": "co.eafit.dfsha.datanode.BlockStoreTest",
+      "xml": "dfsha-datanode/target/surefire-reports/TEST-co.eafit.dfsha.datanode.BlockStoreTest.xml",
+      "sha256": "4554DD01A928E7B8BD13467DE18C70C63F2FB9C4B290EA76611C5DE51ACD35DC"
+    }
+  ],
+  "xml_historicos_excluidos_sin_fuente_actual": [
+    "TEST-co.eafit.dfsha.common.GrpcPlumbingTest.xml",
+    "TEST-co.eafit.dfsha.control.repository.JdbcNamespacePostgresTest.xml",
+    "TEST-co.eafit.dfsha.control.security.AccessTokenServiceTest.xml",
+    "TEST-co.eafit.dfsha.control.security.BlockTokenSignerTest.xml",
+    "TEST-co.eafit.dfsha.control.security.PasswordHasherTest.xml",
+    "TEST-co.eafit.dfsha.control.service.AllocationPolicyTest.xml",
+    "TEST-co.eafit.dfsha.control.service.ControlAuthGrpcTest.xml",
+    "TEST-co.eafit.dfsha.control.service.LoginServiceTest.xml",
+    "TEST-co.eafit.dfsha.control.service.NamespacePathsTest.xml",
+    "TEST-co.eafit.dfsha.control.service.NodeRegistryGrpcServiceTest.xml"
+  ]
+}
