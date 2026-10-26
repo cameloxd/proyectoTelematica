@@ -48,7 +48,8 @@ public final class Db implements AutoCloseable {
     return new Db(new HikariDataSource(config));
   }
 
-  private Db(HikariDataSource pool) {
+  // Acceso de paquete para probar transacciones reales con un pool y esquema aislados.
+  Db(HikariDataSource pool) {
     this.pool = pool;
   }
 
