@@ -7,7 +7,7 @@
 - [PRUEBAS.md](PRUEBAS.md): comandos reproducibles y alcance de las pruebas.
 - [CONTRIBUTING.md](../CONTRIBUTING.md): ramas, revisión y regla para evitar implementaciones paralelas.
 
-El contrato ejecutable está en [dfsha.proto](../dfsha-proto/src/main/proto/dfsha.proto); el esquema vigente es [deploy/schema.sql](../deploy/schema.sql). No copiarlos desde documentos antiguos.
+El contrato ejecutable está en [dfsha.proto](../dfsha-proto/src/main/proto/dfsha.proto); el esquema vigente es [deploy/schema.sql](../deploy/schema.sql) seguido de las [migraciones](../deploy/migrations/README.md). No copiarlos desde documentos antiguos.
 
 ## Histórico conservado
 

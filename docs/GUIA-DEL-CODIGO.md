@@ -196,11 +196,12 @@ Cliente                         ControlNode                       DataNode
   manda solo ese rango.
 - **`rm`**: `ControlServiceImpl.deletePath` hace tres cosas.
   1. Rechaza si hay un lock vigente.
-  2. Marca el archivo `DELETED` y sus ubicaciones `DELETED`.
-  3. Publica un `BlockDeleteTask` por copia en `delete.<nodo>`.
+  2. En una sola transacción, marca archivo/ubicaciones `DELETED` y guarda una tarea por copia en `block_delete_outbox`.
+  3. Devuelve éxito lógico sin esperar al broker. `DeleteOutbox` publica después en `delete.<nodo>` y reintenta los fallos persistidos; varios ControlNodes se reparten las filas con `SKIP LOCKED`.
 
-  Cada DataNode borra lo suyo (`ControlLink.start`). Si un nodo estaba caído, su cola es durable y
-  lo borra al volver.
+  El publicador usa un canal nuevo, mensajes persistentes, `mandatory` y publisher confirms. Una confirmación ambigua puede causar reenvío: `BlockStore.delete` es idempotente por UUID. `published_at` solo indica entrega al broker, no borrado físico. Cada DataNode consume su cola durable (`ControlLink.start`); un fallo de procesamiento pasa a la DLQ, cuya recuperación automática sigue pendiente.
+
+  Antes de actualizar una base existente, aplicar la [migración de la outbox](../deploy/migrations/README.md). No elimina datos ni requiere modificar el contrato proto. Las escrituras/réplicas en vuelo que lleguen después del borrado requieren un cierre posterior; esta outbox resuelve la ventana SQL → publicación, no ese problema.
 - **`rmdir`**: mismo rpc. Si la ruta es un directorio vacío, `deleteEmptyDirectory` lo marca
   borrado.
 - **`lock` / `unlock`**: `ControlServiceImpl.acquireLock` hace un solo `INSERT ... ON CONFLICT DO UPDATE ... WHERE expires_at < now()`.
@@ -321,7 +322,7 @@ Maven genera las clases Java en `co.eafit.dfsha.grpc.v1` (`ControlServiceGrpc`, 
 
 | Archivo | Para qué |
 |---|---|
-| `schema.sql` | Tablas. La clave es `block_location`: una fila por (bloque, nodo) con su rol y estado. |
+| `schema.sql` y `migrations/*.sql` | Esquema base y migraciones ordenadas. `block_location` mantiene una fila por (bloque, nodo); la migración 001 añade la outbox de borrados. |
 | `docker-compose.yml` | PostgreSQL primario y standby, RabbitMQ, 2 ControlNodes y 4 DataNodes. TLS configurado en gRPC, no en AMQP/SQL. |
 | `Dockerfile` | Compila con Maven y deja una imagen con los 3 jars. |
 | `gen-secrets.sh` | Contraseñas, clave AES, claves Ed25519, CA y certificado TLS. |
@@ -343,7 +344,7 @@ Maven genera las clases Java en `co.eafit.dfsha.grpc.v1` (`ControlServiceGrpc`, 
 | Cambiar la heurística | `Placement.score` | Cambiar los pesos 0.60/0.25/0.15. `PlacementTest` dice si se rompió algo. |
 | Agregar un comando al cliente | `ClientMain` | Un `case "nombre" -> { ... }` que llame a un método nuevo de `DfsClient`. Agregarlo a `HELP`. |
 | Agregar un rpc nuevo | 4 lugares | (1) Mensaje y `rpc` en `dfsha.proto`. (2) `@Override` en `ControlServiceImpl` con `Rpc.respond(out, () -> { ... })`. (3) Método en `DfsClient` con `control(s -> s.miRpc(...))`. (4) Comando en `ClientMain`. |
-| Agregar una columna | `schema.sql` | Editar y recrear: `docker compose down -v && docker compose up -d` (borra los datos). |
+| Cambiar el esquema | `deploy/migrations/` | Crear una migración incremental y aplicarla al primario con respaldo y ventana coordinada; no borrar volúmenes. |
 | Desplegar en AWS o GCP | `.env` y `gen-secrets.sh` | `ADVERTISE_HOST=<IP pública>`. Generar certificados con `EXTRA_SAN="IP:<IP pública>" bash gen-secrets.sh` y abrir los puertos 50051-50052 y 50061-50064 en el security group. |
 | Ver qué pasa adentro | terminal | `docker compose logs -f controlnode1 datanode2`. Consola de RabbitMQ en http://localhost:15672. SQL con `docker compose exec postgres psql -U dfsha -d dfsha`. |
 | Probar sin TLS | cliente | `TLS_CA_FILE=none`. Sin certificados en el servidor (`TLS_CERT_FILE` vacío), el servidor queda en texto plano. |
@@ -392,7 +393,7 @@ JOIN datanode d USING (datanode_id) WHERE f.status = 'COMMITTED' ORDER BY 1, 2, 
 - No hay rebalanceo ni decommission.
 - `write()` parcial no existe: los archivos son WORM y se reemplazan con `rm` + `put`.
 
-Los riesgos y criterios pendientes, incluidos los borrados ante fallos del broker y los reenvíos de
+Los riesgos y criterios pendientes, incluidos los fallos del consumidor de borrados, las escrituras en vuelo y los reenvíos de
 bloques distintos, se mantienen en [ESTADO-DEL-PROYECTO.md](ESTADO-DEL-PROYECTO.md). No interpretar
 esta descripción del diseño como evidencia de ejecución de los escenarios.
 

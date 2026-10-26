@@ -75,6 +75,7 @@ abstract class PostgresControlFixture {
       schemaCreated = true;
       c.setSchema(schema);
       s.execute(Files.readString(Path.of("..", "deploy", "schema.sql")));
+      s.execute(Files.readString(Path.of("..", "deploy", "migrations", "001-block-delete-outbox.sql")));
     }
     HikariConfig config = new HikariConfig();
     config.setJdbcUrl(System.getenv("DFSHA_TEST_DB_URL"));
@@ -88,8 +89,8 @@ abstract class PostgresControlFixture {
     db = new Db(new HikariDataSource(config));
     var pair = KeyPairGenerator.getInstance("Ed25519").generateKeyPair();
     tokens = new Tokens(pair.getPrivate(), pair.getPublic());
-    // Los RPC de C2.1/C2.2 no usan RabbitMQ; null evita fingir una integración con el broker.
-    var control = new ControlServiceImpl(db, tokens, null);
+    // Los RPC solo persisten tareas. No abren RabbitMQ ni certifican un broker real.
+    var control = new ControlServiceImpl(db, tokens);
     var auth = Rpc.requireToken(t -> tokens.verify(t, Tokens.SESSION), Set.of(
         ControlServiceGrpc.getRegisterMethod().getFullMethodName(),
         ControlServiceGrpc.getLoginMethod().getFullMethodName()));

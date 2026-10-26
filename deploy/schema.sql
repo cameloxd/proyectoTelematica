@@ -1,6 +1,7 @@
 -- DFSha - Esquema PostgreSQL (Fase 3)
 -- Se ejecuta una sola vez, cuando se crea el volumen de PostgreSQL
--- (/docker-entrypoint-initdb.d/01-schema.sql). Si lo cambias: docker compose down -v
+-- (/docker-entrypoint-initdb.d/01-schema.sql), seguido de migrations/*.sql en orden.
+-- Para bases existentes aplicar migraciones: NO borrar volúmenes (ver migrations/README.md).
 --
 -- Idea central: el ControlNode NO guarda nada en memoria. Todo el estado del sistema vive
 -- aquí; por eso pueden correr dos ControlNodes a la vez contra la misma base (alta disponibilidad).
@@ -81,7 +82,7 @@ CREATE UNIQUE INDEX uq_file_live_path ON dfs_file(owner_id, path) WHERE status <
 -- Bloques y sus copias.
 --   block_location es la tabla clave de la replicación: una fila por (bloque, DataNode).
 --   PLANNED = asignada, todavía no llega el bloque.  WRITTEN = el DataNode confirmó con
---   ReportBlockStored.  DELETED = se mandó a borrar.
+--   ReportBlockStored. DELETED = borrado lógico; no prueba la eliminación física.
 --   El espacio usado de un nodo = suma de sus bloques PLANNED + WRITTEN.
 -- ---------------------------------------------------------------------------
 CREATE TABLE dfs_block (
