@@ -202,7 +202,7 @@ public final class ControlServiceImpl extends ControlServiceGrpc.ControlServiceI
       return db.tx(c -> {
         // El lock debe preceder a la consulta de idempotencia y a CUALQUIER cambio del plan.
         // Así dos peticiones simultáneas ven el resultado confirmado de la primera.
-        Db.one(c, "SELECT pg_advisory_xact_lock(1)", r -> 1);
+        CapacityReservations.lock(c);
         lockNamespace(c, owner);
         // 1. Idempotencia: si el cliente reintenta con el mismo operation_id, recibe el mismo plan.
         UploadRow previous = Db.one(c, "SELECT file_id, path, size_bytes, status::text FROM dfs_file WHERE owner_id = ? AND operation_id = ?",
