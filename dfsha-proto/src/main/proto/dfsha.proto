@@ -18,7 +18,11 @@ message LoginRequest { string username = 1; string password = 2; }
 message LoginResponse { string access_token = 1; int64 expires_at_epoch_seconds = 2; string user_id = 3; }
 
 // ---------------------------------------------------------------- archivos
-message AllocateFileRequest { string path = 1; int64 file_size_bytes = 2; string operation_id = 3; }
+// v1.2: reemplazo copy-on-write condicionado a version y lease. Vacio conserva put v1.1.
+message AllocateFileRequest {
+  string path = 1; int64 file_size_bytes = 2; string operation_id = 3;
+  string replaces_file_id = 4; string lock_token = 5;
+}
 message FileRef { string file_id = 1; string path = 2; }
 
 // v1.1: una copia de un bloque. El manifiesto trae todas las copias para leer con failover.

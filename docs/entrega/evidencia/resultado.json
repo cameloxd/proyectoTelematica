@@ -1,0 +1,40 @@
+{
+    "Fecha":  "2026-10-26T01:16:13.3836886-05:00",
+    "Proyecto":  "dfsha-demo-entrega-20261026",
+    "Commit":  "74c560bccd3976be370954c4250008e06a46d917",
+    "UsuarioDemo":  "demoaa71400747a4",
+    "Bytes":  20971520,
+    "SHA256Original":  "D9BD7967570F3075F0ED345833B31C7436D3ACFD1F5109B232F0F5F6F809B247",
+    "SHA256Descarga":  "D9BD7967570F3075F0ED345833B31C7436D3ACFD1F5109B232F0F5F6F809B247",
+    "Bloques":  [
+                    "5a38b240-1bfe-481e-a6b2-9ac68629dfca",
+                    "a785f8cf-ac83-41b8-af57-db57a5804ee4",
+                    "ccbd147b-e4c2-490b-9a96-d537b4a9f0b0"
+                ],
+    "CopiasMinimas":  3,
+    "BorradoFisico":  true,
+    "RF3":  true,
+    "TLSCompleto":  true,
+    "JarSHA256":  {
+                      "dfsha-controlnode":  "B3C89D3094775DF9D273475EDC0C28687FDE8462CD9703F92639CEE2FFFC8B00",
+                      "dfsha-datanode":  "EFB25C9DD62FF79C455C7332E95FF20CC5D922F5472C0C9D0E1E486769D440F2",
+                      "dfsha-client":  "9E398C32219D5FD0B4BBA0425A62E0248423BE4D14E91468F47AA455C90A2B63"
+                  },
+    "Escenarios":  {
+                       "Seguridad":  "SQL TLS verificado/rechazo plaintext; AMQP solo TLS; gRPC sin TLS rechazado; aislamiento y locks exclusivos/expiracion",
+                       "DataNode":  "Descarga con checksum correcto; DEAD detectado; factor tres repuesto",
+                       "ControlNode":  "Cliente usa el otro ControlNode y conserva checksum",
+                       "Broker":  "Borrado logico durante caida; outbox pendiente observada; borrado fisico tras recuperacion",
+                       "PostgreSQL":  "WAL sincronizado antes de fallo controlado; promocion manual; lectura posterior verificada"
+                   },
+    "Carga":  {
+                  "Clientes":  4,
+                  "BytesPorCliente":  20971520,
+                  "Segundos":  47.868,
+                  "MiBTransferidos":  160,
+                  "MiBPorSegundo":  3.343,
+                  "ChecksumsCorrectos":  4
+              },
+    "StandbyPromovido":  true,
+    "Limites":  "Prueba local acotada; no nube, HA del host/broker, fallo abrupto sin sincronizar WAL, tolerancia bizantina ni rendimiento ilimitado. DLQ requiere recuperacion operativa."
+}

@@ -39,4 +39,25 @@
       </plugin>
     </plugins>
   </build>
+  <!-- En un entorno restringido protoc se genera primero nativamente. No usar con clean.
+       El validador comprueba vigencia del contrato; este perfil registra sus fuentes para javac. -->
+  <profiles>
+    <profile>
+      <id>reuse-generated-proto</id>
+      <activation><property><name>protoc.skip</name><value>true</value></property></activation>
+      <build>
+        <resources><resource><directory>src/main/proto</directory></resource></resources>
+        <plugins><plugin>
+          <groupId>org.codehaus.mojo</groupId><artifactId>build-helper-maven-plugin</artifactId><version>3.6.2</version>
+          <executions><execution>
+            <id>register-generated-proto</id><phase>generate-sources</phase><goals><goal>add-source</goal></goals>
+            <configuration><sources>
+              <source>${project.build.directory}/generated-sources/protobuf/java</source>
+              <source>${project.build.directory}/generated-sources/protobuf/grpc-java</source>
+            </sources></configuration>
+          </execution></executions>
+        </plugin></plugins>
+      </build>
+    </profile>
+  </profiles>
 </project>

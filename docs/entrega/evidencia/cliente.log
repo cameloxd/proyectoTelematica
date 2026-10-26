@@ -1,0 +1,25 @@
+DFSha. ControlNodes: [localhost:50071, localhost:50072]. Escribe help.
+dfsha:/> Usuario demoaa71400747a4 creado
+dfsha:/> Sesi¾n iniciada como demoaa71400747a4
+dfsha:/> directorio creado: /demo
+dfsha:/> Subido /demo/archivo20.bin (20971520 bytes) en 15,05 s. SHA-256 d9bd7967570f3075f0ed345833b31c7436d3acfd1f5109b232f0f5f6f809b247
+dfsha:/> Subido /demo/texto.txt (44 bytes) en 0,53 s. SHA-256 554cd3687e322a720b8e2ea0aa050e0701a73144c4217ff927d7fdf9c23b7121
+dfsha:/> -     20971520  archivo20.bin
+-           44  texto.txt
+dfsha:/> Descargado en descargado.bin (20971520 bytes) en 3,32 s. SHA-256 d9bd7967570f3075f0ed345833b31c7436d3acfd1f5109b232f0f5f6f809b247
+dfsha:/> DFSHA-DEMO-LOCAL
+dfsha:/> Lock de /demo/texto.txt hasta las 01:11:09
+dfsha:/> Lock liberado
+dfsha:/> WARNING: A terminally deprecated method in sun.misc.Unsafe has been called
+WARNING: sun.misc.Unsafe::objectFieldOffset has been called by io.grpc.netty.shaded.io.netty.util.internal.PlatformDependent0$4 (file:/C:/Users/camil/Documents/Codex/2026-10-21/ho/work/proyectoTelematica/dfsha-client/target/dfsha-client.jar)
+WARNING: Please consider reporting this to the maintainers of class io.grpc.netty.shaded.io.netty.util.internal.PlatformDependent0$4
+WARNING: sun.misc.Unsafe::objectFieldOffset will be removed in a future release
+WARNING: A restricted method in java.lang.System has been called
+WARNING: java.lang.System::loadLibrary has been called by io.grpc.netty.shaded.io.netty.util.internal.NativeLibraryUtil in an unnamed module (file:/C:/Users/camil/Documents/Codex/2026-10-21/ho/work/proyectoTelematica/dfsha-client/target/dfsha-client.jar)
+WARNING: Use --enable-native-access=ALL-UNNAMED to avoid a warning for callers in this module
+WARNING: Restricted methods will be blocked in a future release unless native access is enabled
+
+01:10:07 [INFO] DfsClient - Bloque 2 leÝdo de localhost:50083
+01:10:08 [INFO] DfsClient - Bloque 0 leÝdo de localhost:50081
+01:10:08 [INFO] DfsClient - Bloque 1 leÝdo de localhost:50082
+01:10:09 [INFO] DfsClient - Bloque 0 leÝdo de localhost:50084

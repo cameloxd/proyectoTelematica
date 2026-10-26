@@ -4,3 +4,6 @@
 *.sql  text eol=lf
 *.yml  text eol=lf
 Dockerfile text eol=lf
+# PDFs y evidencia se conservan byte a byte: autocrlf no debe invalidar el PDF ni sus hashes.
+*.pdf binary
+docs/entrega/evidencia/** -text -whitespace

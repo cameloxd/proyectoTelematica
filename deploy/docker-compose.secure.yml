@@ -1,0 +1,38 @@
+# Perfil seguro para volumenes NUEVOS. Usa certificados con SAN postgres, postgres-standby y rabbitmq.
+# No aplicarlo sobre la demo antigua sin un procedimiento de migracion y certificados revisados.
+x-secure-env: &secure-env
+  RABBITMQ_TLS: 'true'
+  RABBITMQ_PORT: '5671'
+x-secure-db: &secure-db
+  <<: *secure-env
+  DB_URL: jdbc:postgresql://postgres:5432,postgres-standby:5432/dfsha?targetServerType=primary&sslmode=verify-full&sslrootcert=/run/secrets/tls_ca
+services:
+  postgres:
+    entrypoint: [sh, /scripts/tls-entrypoint.sh]
+    secrets: [tls_cert, tls_key, tls_ca]
+    volumes:
+      - ./postgres/tls-entrypoint.sh:/scripts/tls-entrypoint.sh:ro
+      - ./postgres/require-tls.sh:/docker-entrypoint-initdb.d/03-require-tls.sh:ro
+      - ./postgres/check-tls.sh:/scripts/check-tls.sh:ro
+  postgres-standby:
+    entrypoint: [sh, /scripts/standby-tls.sh]
+    secrets: [tls_cert, tls_key, tls_ca]
+  rabbitmq:
+    secrets: [tls_cert, tls_key, tls_ca]
+    ports: !override
+      - '127.0.0.1:${RABBITMQ_AMQP_PORT:-5674}:5671'
+      - '127.0.0.1:${RABBITMQ_MANAGEMENT_PORT:-15673}:15672'
+    volumes:
+      - ./rabbitmq-tls.conf:/etc/rabbitmq/rabbitmq.conf:ro
+  controlnode1:
+    environment: *secure-db
+  controlnode2:
+    environment: *secure-db
+  datanode1:
+    environment: *secure-env
+  datanode2:
+    environment: *secure-env
+  datanode3:
+    environment: *secure-env
+  datanode4:
+    environment: *secure-env

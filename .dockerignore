@@ -3,6 +3,7 @@
 **/target
 deploy/secrets
 deploy/.escenarios
+deploy/.demo
 deploy/*.jar
 .env
 .idea

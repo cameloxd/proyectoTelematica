@@ -19,7 +19,7 @@ Las pruebas RPC actuales se ejecutan sin TLS. Usar una terminal de pruebas sin c
 
 ## 2. Integración con PostgreSQL real
 
-Usar una base de pruebas existente, con un usuario que pueda crear esquemas. No apuntar a producción. Cada caso crea `dfsha_c2_<uuid>`, carga `deploy/schema.sql` seguido de `deploy/migrations/001-block-delete-outbox.sql` y elimina únicamente ese esquema al terminar; no trunca tablas ajenas.
+Usar una base de pruebas existente, con un usuario que pueda crear esquemas. No apuntar a producción. Cada caso crea `dfsha_c2_<uuid>`, carga `deploy/schema.sql` seguido de las migraciones 001 y 002, y elimina únicamente ese esquema al terminar; no trunca tablas ajenas.
 
 Ejemplo PowerShell, adaptando URL y credenciales locales:
 
@@ -62,10 +62,49 @@ mvn '-DargLine=-Djava.io.tmpdir=C:/ruta/absoluta/permitida/test-temp' test
 
 Pasar `java.io.tmpdir` al inicio del JVM evita confundir errores de permisos del sandbox con defectos de almacenamiento. No modificar el algoritmo para silenciar esos errores ni ignorar sus tests.
 
-## 4. Evidencia end-to-end: etapa posterior
+## 4. Versiones, almacenamiento y cliente
+
+`FileVersionsPostgresTest` comprueba visibilidad atómica, conservación de versión previa ante
+commit incompleto, lease vencido/incorrecto, aislamiento, idempotencia y limpieza de staging.
+`FileAccessTest` comprueba el ciclo open/read/write/close/abort mediante gRPC local y un
+protocolo de servidor acotado; no sustituye los casos PostgreSQL ni los DataNodes reales.
+`BlockStoreTest` añade reenvío idéntico sin reescritura, rechazo de contenido distinto para el
+mismo UUID, tombstone tras reinicio y carreras escritor/borrado. No certifica durabilidad física
+ante pérdida de alimentación ni escritura de varios procesos sobre un mismo volumen.
+
+La batería vigente tiene 89 pruebas: common 17, controlnode 55, datanode 11 y client 6;
+49 usan PostgreSQL real. Consultar XML de la pasada concreta, no sumar reportes antiguos.
+
+## 5. Contrato generado en un entorno restringido
+
+El camino reproducible normal es `mvn clean verify`, que genera Java desde el proto.
+Si Windows impide ejecutar protoc dentro del sandbox pero permite ejecutarlo en PowerShell
+del usuario, ejecutar primero `mvn -pl dfsha-proto -am generate-sources` allí. Verificar que
+las fuentes generadas correspondan al proto actual antes de usar:
+
+```powershell
+mvn '-Dprotoc.skip=true' verify
+```
+
+El perfil registra ambos directorios generados. No usar `clean` en esta alternativa porque
+elimina las fuentes que se pretende reutilizar. No presentar esta alternativa como generación
+limpia. La CI de Linux no utiliza el atajo.
+
+## 6. Evidencia end-to-end
 
 Los comandos de arranque y los siete escenarios están en [GUIA-DEL-CODIGO.md](GUIA-DEL-CODIGO.md#7-cómo-correr-y-probar).
 
 `deploy/escenarios.sh` detiene servicios y promueve PostgreSQL: ejecutar únicamente en un clúster de pruebas y con autorización. Guardar su resultado junto con el commit, entorno, factor de réplica y checksums usados.
 
-Las pruebas unitarias/JDBC no demuestran por sí solas TLS real, replicación física, failover PostgreSQL, borrado distribuido ni rendimiento. Esos criterios permanecen en el inventario vigente hasta tener evidencia.
+Las pruebas unitarias/JDBC no demuestran por sí solas TLS real, replicación física, failover
+PostgreSQL, borrado distribuido ni rendimiento. La demo segura del 26 de octubre sí verificó
+los escenarios locales descritos en [DEMO-LOCAL.md](DEMO-LOCAL.md) y dejó recibo/logs.
+La prueba de failover SQL sincronizó WAL antes de detener el primario: no es pérdida cero
+ante un fallo abrupto. No hay evidencia de nube/Internet ni de HA del equipo anfitrión.
+
+## 7. Integración continua
+
+`.github/workflows/verify.yml` configura Java 17, PostgreSQL 16 temporal y `mvn clean verify`.
+Rechaza cualquier fallo/error/omisión y menos de 89 pruebas. Conserva reportes JUnit.
+Las credenciales del workflow son desechables de CI, nunca credenciales del despliegue.
+Su existencia no equivale a una ejecución aprobada: comprobar el check remoto del commit.

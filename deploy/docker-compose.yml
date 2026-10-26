@@ -88,6 +88,7 @@ services:
       - postgres_data:/var/lib/postgresql/data
       - ./schema.sql:/docker-entrypoint-initdb.d/01-schema.sql:ro
       - ./migrations/001-block-delete-outbox.sql:/docker-entrypoint-initdb.d/01a-delete-outbox.sql:ro
+      - ./migrations/002-file-versions.sql:/docker-entrypoint-initdb.d/01b-file-versions.sql:ro
       - ./postgres/init-replication.sh:/docker-entrypoint-initdb.d/02-replication.sh:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U dfsha -d dfsha"]
@@ -135,11 +136,11 @@ services:
   # Dos ControlNodes activos a la vez (no guardan estado: todo está en PostgreSQL).
   controlnode1:
     <<: *controlnode
-    ports: ["50051:50051"]
+    ports: ["${CONTROLNODE1_PORT:-50051}:50051"]
 
   controlnode2:
     <<: *controlnode
-    ports: ["50052:50051"]
+    ports: ["${CONTROLNODE2_PORT:-50052}:50051"]
 
   # ADVERTISED_ENDPOINT es la dirección que reciben los clientes. En AWS/GCP define
   # ADVERTISE_HOST en .env con la IP pública o el DNS de la VM.
@@ -149,9 +150,9 @@ services:
       <<: *datanode-env
       NODE_NAME: datanode1
       GRPC_PORT: "50061"
-      ADVERTISED_ENDPOINT: ${ADVERTISE_HOST:-localhost}:50061
+      ADVERTISED_ENDPOINT: ${ADVERTISE_HOST:-localhost}:${DATANODE1_PORT:-50061}
       INTERNAL_ENDPOINT: datanode1:50061
-    ports: ["50061:50061"]
+    ports: ["${DATANODE1_PORT:-50061}:50061"]
     volumes: [datanode1_data:/data/blocks]
 
   datanode2:
@@ -160,9 +161,9 @@ services:
       <<: *datanode-env
       NODE_NAME: datanode2
       GRPC_PORT: "50062"
-      ADVERTISED_ENDPOINT: ${ADVERTISE_HOST:-localhost}:50062
+      ADVERTISED_ENDPOINT: ${ADVERTISE_HOST:-localhost}:${DATANODE2_PORT:-50062}
       INTERNAL_ENDPOINT: datanode2:50062
-    ports: ["50062:50062"]
+    ports: ["${DATANODE2_PORT:-50062}:50062"]
     volumes: [datanode2_data:/data/blocks]
 
   datanode3:
@@ -171,9 +172,9 @@ services:
       <<: *datanode-env
       NODE_NAME: datanode3
       GRPC_PORT: "50063"
-      ADVERTISED_ENDPOINT: ${ADVERTISE_HOST:-localhost}:50063
+      ADVERTISED_ENDPOINT: ${ADVERTISE_HOST:-localhost}:${DATANODE3_PORT:-50063}
       INTERNAL_ENDPOINT: datanode3:50063
-    ports: ["50063:50063"]
+    ports: ["${DATANODE3_PORT:-50063}:50063"]
     volumes: [datanode3_data:/data/blocks]
 
   datanode4:
@@ -182,9 +183,9 @@ services:
       <<: *datanode-env
       NODE_NAME: datanode4
       GRPC_PORT: "50064"
-      ADVERTISED_ENDPOINT: ${ADVERTISE_HOST:-localhost}:50064
+      ADVERTISED_ENDPOINT: ${ADVERTISE_HOST:-localhost}:${DATANODE4_PORT:-50064}
       INTERNAL_ENDPOINT: datanode4:50064
-    ports: ["50064:50064"]
+    ports: ["${DATANODE4_PORT:-50064}:50064"]
     volumes: [datanode4_data:/data/blocks]
 
 networks:
@@ -192,15 +193,15 @@ networks:
 
 # Los archivos los crea gen-secrets.sh y no van a Git.
 secrets:
-  postgres_password:        { file: ./secrets/postgres_password.txt }
-  rabbitmq_password:        { file: ./secrets/rabbitmq_password.txt }
-  cluster_registration_key: { file: ./secrets/cluster_registration_key.txt }
-  storage_key:              { file: ./secrets/storage_key.txt }
-  token_private_key:        { file: ./secrets/token_private.pem }
-  token_public_key:         { file: ./secrets/token_public.pem }
-  tls_ca:                   { file: ./secrets/ca.crt }
-  tls_cert:                 { file: ./secrets/node.crt }
-  tls_key:                  { file: ./secrets/node.key }
+  postgres_password:        { file: '${DFSHA_SECRETS_DIR:-./secrets}/postgres_password.txt' }
+  rabbitmq_password:        { file: '${DFSHA_SECRETS_DIR:-./secrets}/rabbitmq_password.txt' }
+  cluster_registration_key: { file: '${DFSHA_SECRETS_DIR:-./secrets}/cluster_registration_key.txt' }
+  storage_key:              { file: '${DFSHA_SECRETS_DIR:-./secrets}/storage_key.txt' }
+  token_private_key:        { file: '${DFSHA_SECRETS_DIR:-./secrets}/token_private.pem' }
+  token_public_key:         { file: '${DFSHA_SECRETS_DIR:-./secrets}/token_public.pem' }
+  tls_ca:                   { file: '${DFSHA_SECRETS_DIR:-./secrets}/ca.crt' }
+  tls_cert:                 { file: '${DFSHA_SECRETS_DIR:-./secrets}/node.crt' }
+  tls_key:                  { file: '${DFSHA_SECRETS_DIR:-./secrets}/node.key' }
 
 volumes:
   postgres_data:

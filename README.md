@@ -1,119 +1,74 @@
 # DFSha
 
-Sistema de archivos distribuido por bloques (estilo HDFS) con alta disponibilidad, replicación y
-seguridad, en Java. Proyecto 1 de ST0263 Tópicos Especiales en Telemática / SI3007 Sistemas
-Distribuidos, EAFIT 2026-2. Equipo: Mendel, Camilo y Martín.
+Sistema de archivos distribuido por bloques, en Java, para ST0263/SI3007, EAFIT 2026-2.
+Equipo: Camilo, Mendel y Martín. Separa metadatos (ControlNodes/PostgreSQL) de datos
+(DataNodes), con replicación asíncrona y cliente CLI. No es un montaje POSIX/FUSE.
 
-**Para entender el código y cómo modificarlo: [docs/GUIA-DEL-CODIGO.md](docs/GUIA-DEL-CODIGO.md).**
+## Empezar aquí
 
-## Referencias vigentes
+- [Estado y evidencia](docs/ESTADO-DEL-PROYECTO.md).
+- [Guía del código](docs/GUIA-DEL-CODIGO.md) y [pruebas](docs/PRUEBAS.md).
+- [Demo reproducible y advertencia de promoción](docs/DEMO-LOCAL.md).
+- [Informe y lista de entrega](docs/entrega/INFORME.md).
+- [Guion de video de 12 minutos](docs/entrega/GUION-VIDEO.md).
+- [Contribución y revisiones](CONTRIBUTING.md).
 
-- [Estado y responsabilidades](docs/ESTADO-DEL-PROYECTO.md): qué existe, qué está probado y qué falta. Consultarlo antes de empezar una tarea para no repetir trabajo.
-- [Guía del código](docs/GUIA-DEL-CODIGO.md): implementación y flujos actuales.
-- [Pruebas](docs/PRUEBAS.md): comprobación unitaria, integración PostgreSQL y límites de la evidencia.
-- [Índice de documentos](docs/README.md): distingue documentación vigente de diseños históricos.
+## Capacidades
 
-La consolidación está integrada en `develop` por el PR #10 (`cb67cf0`). La recuperación de publicación de borrados se desarrolla después, en `fix/control-delete-outbox`, y requiere su propia revisión e integración. Una configuración de HA o un script de escenarios no equivalen a una demostración end-to-end.
+- RF1: usuarios, login y namespace por propietario: ls/cd/pwd/mkdir/rmdir/rm.
+- RF2: put/get paralelos, SHA-256 y lectura desde réplicas con failover.
+- RF3: open/read/write/close con instantánea local; un escritor con lease, publicación
+  atómica de una nueva versión al cerrar y lectores abiertos que conservan su instantánea.
+  `abort` o salir sin cerrar descarta los cambios. `cat`, `lock` y `unlock` también disponibles.
+- Bloques de 8 MiB, colocación por rondas/puntaje y factor de réplica configurable (3 en la demo).
+- Outbox transaccional para borrados; reintentos, expiración de cargas abandonadas y
+  tombstones persistentes que impiden recrear un UUID borrado mediante escrituras tardías.
+- AES-256-GCM en disco, tokens Ed25519, PBKDF2 y clave de registro de nodos.
+- gRPC con TLS. El overlay seguro añade TLS verificado a AMQP, JDBC y replicación PostgreSQL.
+- Dos ControlNodes activos, cuatro DataNodes y PostgreSQL primario/standby. La promoción
+  de PostgreSQL es manual y requiere aislar el primario anterior; no es HA automática.
 
-## Qué hace
+## Compilar y probar
 
-- **Cliente (CLI)**:
-  - `register` y `login`
-  - `ls`, `cd`, `pwd`, `mkdir`, `rmdir` y `rm` (RF1)
-  - `put` y `get`, que suben y bajan bloques en paralelo (RF2)
-  - `cat` (lectura parcial), `lock` y `unlock` (RF3 parcial; no hay escritura parcial)
-- **ControlNode** (Compose configura 2 instancias activas): metadatos en PostgreSQL, partición de archivos en bloques
-  de 8 MiB, réplicas con factor 3, y detección de nodos caídos con reposición de copias.
-- **DataNodes** (4): guardan los bloques cifrados con AES-256-GCM y copian réplicas entre ellos.
-- **Comunicación**:
-  - gRPC con TLS cuando se configuran certificados y CA, como en Compose.
-  - RabbitMQ para heartbeats, réplicas y borrados.
-  - Outbox PostgreSQL para conservar y reintentar la publicación de borrados aunque falle RabbitMQ; no es un acuse de eliminación física.
-  - PostgreSQL primario + standby con streaming replication y promoción manual asistida.
-
-```text
-Cliente ──gRPC/TLS──► ControlNode 1 | ControlNode 2 ──► PostgreSQL (primario → standby)
-   │                         │
-   │                         └──RabbitMQ──► heartbeats · réplicas · borrados
-   └──gRPC/TLS (bloques)──► DataNode 1..4 ◄──réplicas──► DataNode 1..4
-```
-
-## Requisitos
-
-Java 17, Maven 3.9+ y Docker con Compose v2. En Windows, los `.sh` se corren con Git Bash.
-
-## Verificar antes del despliegue
+Java 17+, Maven 3.9+ y, para la demo, Docker Desktop Linux, Git Bash y Compose 2.24+.
 
 ```bash
-mvn test                       # sin DFSHA_TEST_DB_URL, las pruebas PostgreSQL se omiten
-mvn package                    # ejecuta pruebas y genera los jars
+mvn clean verify
 ```
 
-Para incluir la integración PostgreSQL y entender qué demuestra cada ejecución, seguir [PRUEBAS.md](docs/PRUEBAS.md). No usar `-DskipTests` como evidencia de validación.
+Sin `DFSHA_TEST_DB_URL`, se omiten las pruebas PostgreSQL: un build verde no basta.
+[PRUEBAS.md](docs/PRUEBAS.md) explica cómo incluirlas. La CI configura PostgreSQL de pruebas;
+su resultado debe consultarse en GitHub, no inferirse de la existencia del workflow.
 
-## Correr el clúster (etapa posterior)
+## Demo local segura (Windows)
 
-Antes de iniciarlo, revisar los pendientes de [ESTADO-DEL-PROYECTO.md](docs/ESTADO-DEL-PROYECTO.md). Estos comandos se conservan como referencia: la consolidación no inicia contenedores ni promueve bases de datos.
+Desde la raíz del repositorio, después de generar los JAR con `mvn package`:
 
-Si la base ya existe, aplicar primero la [migración de la outbox](deploy/migrations/README.md) al primario. Recrear contenedores no migra un volumen existente; no usar `down -v` para actualizar el esquema.
-
-```bash
-mvn -q package                 # compila, corre las pruebas y genera los jars
-cd deploy
-cp env.example .env
-bash gen-secrets.sh            # contraseñas, claves y certificados TLS (no van a Git)
-docker compose up -d --build   # PostgreSQL x2, RabbitMQ, 2 ControlNodes, 4 DataNodes
-docker compose ps
+```powershell
+.\deploy\local-demo.ps1 -ProjectName dfsha-demo-nueva -Secure -LoadClients 4
 ```
 
-## Usar el cliente
+Para probar además fallos controlados, usar OTRO nombre nuevo y añadir `-ValidateFailures`.
+Ese modo promueve el standby y deja el primario antiguo detenido: **no volver a ejecutar
+`up` ni reanudar ese proyecto después de la promoción**. No usar la demo con datos reales.
+No se eliminan volúmenes ni se toca un proyecto anterior. Puertos y secretos: [DEMO-LOCAL.md](docs/DEMO-LOCAL.md).
 
-Desde la raíz del repo (toma la CA de `deploy/secrets/ca.crt` para TLS):
-
-```bash
-java -jar dfsha-client/target/dfsha-client.jar
-dfsha:/> register ana 1234
-dfsha:/> login ana 1234
-dfsha:/> put archivo.bin
-dfsha:/> ls
-dfsha:/> get archivo.bin copia.bin
-```
-
-Variables del cliente:
-
-| Variable | Valor por defecto |
-|---|---|
-| `CONTROLNODE_ENDPOINTS` | `localhost:50051,localhost:50052` |
-| `TLS_CA_FILE` | `deploy/secrets/ca.crt`; `none` = sin TLS |
-
-## Probar los escenarios de la Fase 3
-
-Ejecutarlos solo sobre un clúster de pruebas: el script detiene nodos y promueve el standby de PostgreSQL. No es una comprobación de solo lectura y no sustituye las pruebas Maven.
-
-```bash
-cd deploy && bash escenarios.sh     # 7 escenarios; deja la tabla en deploy/resultados-escenarios.md
-```
-
-Los escenarios son:
-
-1. Réplicas (factor 3).
-2. Caída de un DataNode y reposición de sus copias.
-3. Descarga con un nodo caído.
-4. Failover del ControlNode y de PostgreSQL.
-5. TLS y cifrado en disco.
-6. Lock.
-7. Borrado en todas las réplicas.
+Resultado local del 2026-10-26 01:16 America/Bogota: RF1/RF2/RF3, TLS, cuatro clientes,
+integridad, replicación, borrado y fallos de DataNode/ControlNode/broker/PostgreSQL aprobados.
+La batería Maven aprobó 89 pruebas sin omisiones. Esto no certifica nube ni producción.
 
 ## Estructura
 
 ```text
-dfsha-proto/        contrato gRPC (dfsha.proto)
-dfsha-common/       gRPC + TLS, tokens Ed25519, RabbitMQ (Env, Rpc, Tokens, Rabbit)
-dfsha-controlnode/  metadatos, asignación de bloques, réplicas, estados de nodos
-dfsha-datanode/     bloques cifrados, validación de tokens, copia de réplicas
-dfsha-client/       consola y API del cliente
-deploy/             docker-compose, Dockerfile, schema.sql, secretos, failover, escenarios
-docs/               guía del código, documentos de los hitos
+dfsha-proto/        contrato gRPC v1.2, aditivo
+dfsha-common/       entorno, TLS, tokens, rutas, hashes y AMQP
+dfsha-controlnode/  metadatos, versiones, reservas, outbox y planificación
+dfsha-datanode/     bloques inmutables cifrados y réplica física
+dfsha-client/       CLI y API de archivos abiertos
+deploy/            Compose, secretos, esquema, migraciones y scripts
+docs/              explicación, evidencia y material de entrega
 ```
 
-Las reglas de ramas y commits están en [CONTRIBUTING.md](CONTRIBUTING.md).
+Para bases existentes aplicar primero [las migraciones 001 y 002](deploy/migrations/README.md)
+con respaldo y ventana coordinada. Nunca actualizar borrando volúmenes. Los diseños antiguos
+se conservan como históricos en [el índice](docs/README.md).

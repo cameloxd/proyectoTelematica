@@ -5,6 +5,12 @@ import com.rabbitmq.client.Connection;
 import com.rabbitmq.client.ConnectionFactory;
 import com.rabbitmq.client.MessageProperties;
 import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.security.KeyStore;
+import java.security.cert.CertificateFactory;
+import javax.net.ssl.SSLContext;
+import javax.net.ssl.TrustManagerFactory;
 import java.util.Map;
 import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -43,7 +49,13 @@ public final class Rabbit implements AutoCloseable {
   public static Rabbit connect(String clientName) {
     ConnectionFactory factory = new ConnectionFactory();
     factory.setHost(Env.get("RABBITMQ_HOST", "localhost"));
-    factory.setPort(Env.getInt("RABBITMQ_PORT", 5672));
+    boolean tls = Boolean.parseBoolean(Env.get("RABBITMQ_TLS", "false"));
+    factory.setPort(Env.getInt("RABBITMQ_PORT", tls ? 5671 : 5672));
+    if (tls) {
+      String ca = Env.get("RABBITMQ_CA_FILE", Env.get("TLS_CA_FILE", null));
+      if (ca == null) throw new IllegalStateException("RabbitMQ TLS exige una CA explicita");
+      configureTls(factory, Path.of(ca));
+    }
     factory.setUsername(Env.get("RABBITMQ_USER", "guest"));
     factory.setPassword(Env.secret("RABBITMQ_PASSWORD", "guest"));
     factory.setAutomaticRecoveryEnabled(true);   // si RabbitMQ se reinicia, se reconecta solo
@@ -56,6 +68,22 @@ public final class Rabbit implements AutoCloseable {
         sleep(3000);
       }
     }
+  }
+
+  static void configureTls(ConnectionFactory factory, Path caFile) {
+    try (var input = Files.newInputStream(caFile)) {
+      var certificates = CertificateFactory.getInstance("X.509").generateCertificates(input);
+      if (certificates.isEmpty()) throw new IllegalArgumentException("CA vacia");
+      KeyStore trust = KeyStore.getInstance(KeyStore.getDefaultType()); trust.load(null, null);
+      int n = 0;
+      for (var certificate : certificates) trust.setCertificateEntry("ca-" + n++, certificate);
+      TrustManagerFactory managers = TrustManagerFactory.getInstance(TrustManagerFactory.getDefaultAlgorithm());
+      managers.init(trust);
+      SSLContext context = SSLContext.getInstance("TLS"); context.init(null, managers.getTrustManagers(), null);
+      // Nunca usar useSslProtocol() sin contexto: no debe confiar en certificados arbitrarios.
+      factory.useSslProtocol(context);
+      factory.enableHostnameVerification();
+    } catch (Exception e) { throw new IllegalStateException("No pude configurar CA de RabbitMQ", e); }
   }
 
   private Rabbit(Connection connection) throws IOException {

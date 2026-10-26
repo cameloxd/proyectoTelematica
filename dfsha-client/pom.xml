@@ -19,6 +19,10 @@
 
   <build>
     <plugins>
+      <plugin>
+        <groupId>org.apache.maven.plugins</groupId><artifactId>maven-surefire-plugin</artifactId>
+        <configuration><environmentVariables><TLS_CA_FILE>none</TLS_CA_FILE></environmentVariables></configuration>
+      </plugin>
       <!-- genera target/dfsha-client.jar (ver pluginManagement en el pom padre) -->
       <plugin><groupId>org.apache.maven.plugins</groupId><artifactId>maven-shade-plugin</artifactId></plugin>
     </plugins>

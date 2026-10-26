@@ -39,12 +39,20 @@ public final class ClientMain {
         cat <ruta> [offset] [bytes]       leer un pedazo sin bajar todo (read)
         lock <ruta> [segundos]            bloquear un archivo (60 s por defecto)
         unlock <ruta>                     liberar el lock
+        open <ruta> [r|rw]                abrir instantanea; rw: lease de 600 s
+        read <handle> <offset> <bytes>    leer de la instantanea abierta
+        write <handle> <offset> <texto>   modificar bytes UTF-8 en cache local
+        close <handle>                   confirmar cambios y cerrar
+        abort <handle>                   descartar cambios y cerrar
+        Los cambios write SOLO se publican con close. exit descarta handles pendientes.
         exit
       """;
 
   public static void main(String[] args) throws Exception {
     List<String> endpoints = Env.getList("CONTROLNODE_ENDPOINTS", "localhost:50051,localhost:50052");
     Map<String, String> myLocks = new HashMap<>();             // ruta -> lock_id de esta sesión
+    Map<String, DfsClient.RemoteFile> files = new HashMap<>();
+    int nextHandle = 1;
     String cwd = "/";
 
     try (DfsClient dfs = new DfsClient(endpoints);
@@ -134,6 +142,32 @@ public final class ClientMain {
               dfs.unlock(myLocks.remove(path));
               System.out.println("Lock liberado");
             }
+            case "open" -> {
+              need(a, 2);
+              var handle = dfs.open(DfsPaths.resolve(cwd, a[1]), a.length > 2 ? a[2] : "r");
+              String id = "h" + nextHandle++;
+              files.put(id, handle);
+              System.out.println("Abierto " + id + " (" + handle.size() + " bytes)");
+            }
+            case "read" -> {
+              need(a, 4);
+              var handle = opened(files, a[1]);
+              System.out.println(new String(handle.read(Long.parseLong(a[2]), Integer.parseInt(a[3])), UTF_8));
+            }
+            case "write" -> {
+              need(a, 4);
+              // split con limite conserva espacios dentro del texto; offsets siempre expresados en bytes.
+              String text = line.trim().split("\\s+", 4)[3];
+              opened(files, a[1]).write(Long.parseLong(a[2]), text.getBytes(UTF_8));
+              System.out.println("Cambio local pendiente: ejecutar close " + a[1]);
+            }
+            case "close", "abort" -> {
+              need(a, 2);
+              var handle = opened(files, a[1]);
+              if (a[0].equals("close")) handle.close(); else handle.abort();
+              files.remove(a[1]);
+              System.out.println("Cerrado " + a[1]);
+            }
             default -> System.out.println("Comando desconocido: " + a[0] + " (escribe help)");
           }
         } catch (StatusRuntimeException e) {
@@ -147,6 +181,12 @@ public final class ClientMain {
 
   private static void need(String[] args, int count) {
     if (args.length < count) throw new IllegalArgumentException("faltan argumentos (escribe help)");
+  }
+
+  private static DfsClient.RemoteFile opened(Map<String, DfsClient.RemoteFile> files, String id) {
+    var file = files.get(id);
+    if (file == null) throw new IllegalArgumentException("handle inexistente: " + id);
+    return file;
   }
 
   private static double seconds(long startNanos) {
