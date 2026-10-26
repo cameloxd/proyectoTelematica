@@ -36,8 +36,8 @@ Hay tres ideas clave:
 
 1. **El ControlNode solo maneja metadatos** (quién es quién, dónde está cada bloque). Los datos
    van directo entre el cliente y los DataNodes.
-2. **El ControlNode no guarda nada en memoria.** Todo vive en PostgreSQL, por eso pueden correr
-   dos a la vez y si uno se cae el otro sigue igual.
+2. **El estado durable del ControlNode vive en PostgreSQL.** Las conexiones y trabajadores sí
+   existen en memoria; otra instancia recupera los metadatos persistidos si una se cae.
 3. **Lo asíncrono va por RabbitMQ**: heartbeats, "copia este bloque" y "borra este bloque".
    Lo que el usuario espera va por gRPC.
 
@@ -67,6 +67,7 @@ dfsha-controlnode/                          servidor de metadatos
   ClusterMonitor.java      tareas de fondo: heartbeats, ALIVE/SUSPECT/DEAD, réplicas
   Placement.java           en qué DataNode va cada bloque (heurística 60/25/15)
   CapacityReservations.java candado común para reservas primarias y de réplicas
+  DeleteOutbox.java        publicación durable de borrados y expiración de cargas abandonadas
   Db.java                  pool de PostgreSQL y ayudas para SQL
   Passwords.java           hash de contraseñas con PBKDF2
 dfsha-datanode/                             servidor de bloques
@@ -201,14 +202,34 @@ Cliente                         ControlNode                       DataNode
 
   El publicador usa un canal nuevo, mensajes persistentes, `mandatory` y publisher confirms. Una confirmación ambigua puede causar reenvío: `BlockStore.delete` es idempotente por UUID. `published_at` solo indica entrega al broker, no borrado físico. Cada DataNode consume su cola durable (`ControlLink.start`); un fallo de procesamiento pasa a la DLQ, cuya recuperación automática sigue pendiente.
 
-  Antes de actualizar una base existente, aplicar la [migración de la outbox](../deploy/migrations/README.md). No elimina datos ni requiere modificar el contrato proto. Las escrituras/réplicas en vuelo que lleguen después del borrado requieren un cierre posterior; esta outbox resuelve la ventana SQL → publicación, no ese problema.
+  Antes de actualizar una base existente, aplicar [las migraciones 001 y 002](../deploy/migrations/README.md).
+  La outbox cierra la ventana SQL -> publicación. El tombstone persistente de `BlockStore`
+  impide que una escritura/réplica tardía recree un UUID ya borrado.
 - **`rmdir`**: mismo rpc. Si la ruta es un directorio vacío, `deleteEmptyDirectory` lo marca
   borrado.
 - **`lock` / `unlock`**: `ControlServiceImpl.acquireLock` hace un solo `INSERT ... ON CONFLICT DO UPDATE ... WHERE expires_at < now()`.
   Si hay un lock vigente no vuelve ninguna fila y se rechaza. El lock vence solo (60 s por
   defecto). `releaseLock` lo borra con el `lock_id`.
 
-### 2.8 Se cae un ControlNode o el PostgreSQL primario
+### 2.8 Abrir, editar y cerrar (RF3)
+
+1. `DfsClient.open(path, "r")` descarga una instantánea completa a caché local privada.
+   `"rw"` adquiere primero un lease exclusivo de 600 s y registra el file_id esperado.
+2. `RemoteFile.read(offset, length)` lee la instantánea; `write(offset, bytes)` solo modifica
+   la caché del escritor. Los offsets son bytes; una lectura individual tiene límite de 64 MiB.
+3. `close` del escritor cambiado llama `putVersion`: AllocateFile incluye `replaces_file_id`
+   y `lock_token`. La migración 002 permite una versión PENDING junto a la COMMITTED.
+4. Se suben bloques con UUID nuevos. CommitFile revalida versión/lease y, en una transacción,
+   retira la versión vieja, persiste su outbox y publica la nueva. Un fallo previo no oculta la vieja.
+5. Un lector ya abierto conserva su caché, incluso después de publicar la nueva versión.
+   No es una promesa de poder volver a descargar UUID antiguos ya retirados.
+6. `abort` descarta. Salir de la CLI o cerrar el cliente aborta handles sin cerrar: no publica
+   cambios implícitamente. Si close falla, conservar handle para reintentar o abortar.
+
+No hay renovación automática del lease. Una edición de más de 600 s puede fallar al cerrar.
+No se cambia un bloque in-place: RF3 reemplaza versiones completas, no es POSIX/FUSE.
+
+### 2.9 Se cae un ControlNode o el PostgreSQL primario
 
 - **ControlNode**: `Rpc.Failover.call` recibe `UNAVAILABLE` y repite la llamada en el siguiente
   endpoint de `CONTROLNODE_ENDPOINTS`. Lo usan el cliente y los DataNodes.
@@ -230,7 +251,8 @@ Es el contrato. Tiene 3 servicios:
 - `NodeRegistryService`: DataNode → ControlNode.
 
 `Heartbeat`, `ReplicationTask` y `BlockDeleteTask` no son rpc: se serializan con
-`toByteArray()` y viajan por RabbitMQ. La versión 1.1 solo agrega cosas, sin renumerar nada.
+`toByteArray()` y viajan por RabbitMQ. La versión 1.2 agrega los campos 4 y 5 de AllocateFileRequest
+para reemplazo/lease; conserva números, nombres y compatibilidad con el put de v1.1.
 Maven genera las clases Java en `co.eafit.dfsha.grpc.v1` (`ControlServiceGrpc`, `BlockPlan`…).
 
 ### `dfsha-common` (Martín; `Tokens`: Camilo)
@@ -257,6 +279,8 @@ Maven genera las clases Java en `co.eafit.dfsha.grpc.v1` (`ControlServiceGrpc`, 
   - `declareNodeQueues(id)` crea las dos colas de un DataNode con dead-letter.
   - `publish(key, bytes, persistente)` publica y espera la confirmación de RabbitMQ.
   - `consume(cola, handler)` hace ack si el handler termina bien y nack si falla.
+  - `RABBITMQ_TLS=true` exige una CA válida, SSLContext explícito y verificación de hostname;
+    no usa la variante trust-all. El overlay seguro del despliegue activa AMQPS.
 - **`DfsPaths`**: `resolve(cwd, entrada)` normaliza `.`, `..` y `//`. También `parent` y `name`.
 - **`Hash`**: SHA-256 en hexadecimal de bytes o de un archivo.
 
@@ -306,6 +330,9 @@ Maven genera las clases Java en `co.eafit.dfsha.grpc.v1` (`ControlServiceGrpc`, 
   etiqueta. El `block_id` va como dato asociado y se escribe `.tmp` con `SYNC` antes de renombrar
   (`ATOMIC_MOVE`). `save` valida el UUID con `file()` antes de cifrar o crear el temporal, igual
   que las otras operaciones de almacenamiento.
+  El mismo UUID admite solo reenvío de bytes idénticos, sin reescribir el cifrado. `delete`
+  crea un tombstone durable antes de eliminar el `.blk`; los reenvíos posteriores se rechazan.
+  Los candados son locales al proceso: cada volumen debe tener un solo escritor.
 - **`ControlLink`**: `register` reintenta cada 3 s. `start` consume las colas, `sendHeartbeat`
   publica la capacidad, lo libre, las transferencias en curso y los bloques, y `reportStored`
   avisa cada bloque guardado.
@@ -322,8 +349,8 @@ Maven genera las clases Java en `co.eafit.dfsha.grpc.v1` (`ControlServiceGrpc`, 
 
 | Archivo | Para qué |
 |---|---|
-| `schema.sql` y `migrations/*.sql` | Esquema base y migraciones ordenadas. `block_location` mantiene una fila por (bloque, nodo); la migración 001 añade la outbox de borrados. |
-| `docker-compose.yml` | PostgreSQL primario y standby, RabbitMQ, 2 ControlNodes y 4 DataNodes. TLS configurado en gRPC, no en AMQP/SQL. |
+| `schema.sql` y `migrations/*.sql` | Esquema base; 001: outbox; 002: staging y reemplazo atómico de versiones. |
+| `docker-compose.yml` y `docker-compose.secure.yml` | Base: TLS gRPC; overlay seguro: añade AMQPS, JDBC verify-full y replicación SQL TLS. |
 | `Dockerfile` | Compila con Maven y deja una imagen con los 3 jars. |
 | `gen-secrets.sh` | Contraseñas, clave AES, claves Ed25519, CA y certificado TLS. |
 | `postgres/init-replication.sh` | Crea el usuario `replicator` en el primario. |
@@ -340,7 +367,7 @@ Maven genera las clases Java en `co.eafit.dfsha.grpc.v1` (`ControlServiceGrpc`, 
 | Cambiar el tamaño de bloque | `deploy/.env` | `BLOCK_SIZE_BYTES=16777216` y `docker compose up -d`. Solo afecta archivos nuevos. |
 | Cambiar el factor de replicación | `deploy/.env` | `REPLICATION_FACTOR=2`. El escaneo ajusta solo los bloques que tengan menos copias. |
 | Cambiar los tiempos de SUSPECT y DEAD | `docker-compose.yml`, en `x-controlnode` | `SUSPECT_AFTER_SECONDS` y `DEAD_AFTER_SECONDS`. El intervalo del heartbeat es `HEARTBEAT_INTERVAL_SECONDS` en los DataNodes. |
-| Agregar un 5.º DataNode | `docker-compose.yml` | Copiar el bloque de `datanode4` con nombre, puerto y volumen nuevos. Agregar `DNS:datanode5` al SAN en `gen-secrets.sh` y regenerar los certificados (borrar `secrets/ca.crt`). |
+| Agregar un 5.º DataNode | Compose y certificados | Crear servicio/volumen/puerto únicos; emitir certificado con DNS:datanode5 bajo la CA acordada y coordinar su distribución. No borrar la CA/secretos de un clúster existente. |
 | Cambiar la heurística | `Placement.score` | Cambiar los pesos 0.60/0.25/0.15. `PlacementTest` dice si se rompió algo. |
 | Agregar un comando al cliente | `ClientMain` | Un `case "nombre" -> { ... }` que llame a un método nuevo de `DfsClient`. Agregarlo a `HELP`. |
 | Agregar un rpc nuevo | 4 lugares | (1) Mensaje y `rpc` en `dfsha.proto`. (2) `@Override` en `ControlServiceImpl` con `Rpc.respond(out, () -> { ... })`. (3) Método en `DfsClient` con `control(s -> s.miRpc(...))`. (4) Comando en `ClientMain`. |
@@ -370,15 +397,15 @@ JOIN datanode d USING (datanode_id) WHERE f.status = 'COMMITTED' ORDER BY 1, 2, 
 | Comunicación | gRPC para lo síncrono (streaming de bloques) y RabbitMQ para lo asíncrono. | El usuario no espera las réplicas ni el borrado físico. Las colas durables sobreviven a nodos caídos. |
 | Particionamiento | Bloques de tamaño fijo (8 MiB), uno por nodo por ronda y luego puntaje 60/25/15. | Un archivo queda repartido en varios nodos (RNF4) y se balancean espacio, carga y cantidad. |
 | Escritura | La copia primaria es síncrona: con su `ReportBlockStored` el commit ya puede responder. | La latencia de subida no depende del factor de replicación. |
-| Réplicas | Asíncronas, por evento. Factor configurable (3). Nunca dos copias en el mismo nodo (llave primaria `(block_id, datanode_id)`). | Es lo que hace HDFS. Con 4 nodos y factor 3 se puede reponer una copia si cae un nodo. |
+| Réplicas | Planificación periódica y tareas asíncronas. Factor configurable (3); nodos distintos por bloque. | Con 4 nodos y factor 3 se puede reponer una copia si cae un nodo. Es una decisión de DFSha, no una reproducción exacta de HDFS. |
 | Copia de una réplica | El destino jala el bloque del origen con `ReadBlock`. | Reutiliza el rpc del cliente; no hay rpc nuevo. |
 | Reposición | El mismo escaneo periódico (5 s) sirve para archivos nuevos y para nodos caídos. | Un solo mecanismo es más simple y más fácil de probar. |
-| Consistencia | Replicación eventual: entre el commit y la última réplica hay una ventana. Solo se leen copias WRITTEN. | La API del cliente es WORM; falta proteger y probar la inmutabilidad del almacenamiento ante reenvíos distintos. |
+| Consistencia | Publicación transaccional de versiones; réplicas eventuales y bloques inmutables. | RF3 reemplaza la versión al cerrar, el lector abierto conserva su instantánea. El commit inicial no espera factor tres. |
 | Metadatos | Transacciones de PostgreSQL y `CapacityReservations` común a primarias y réplicas. | Las reservas se serializan; el lock de elección del escáner tiene una función distinta. |
 | HA del ControlNode | Dos ControlNodes activos y sin estado. Failover en el cliente y en los DataNodes. | No hace falta elegir líder: el estado está en PostgreSQL. |
 | HA de PostgreSQL | Primario y standby con streaming replication asíncrona y promoción manual asistida. | Puede haber cambios recientes aún no replicados: no se garantiza pérdida cero. La promoción automática no está implementada. |
 | Nodo que vuelve | Conserva su id (upsert por nombre) y sus bloques. Si sobra una copia, no se borra. | No necesita block report. Una copia de más no daña nada. |
-| Seguridad en tránsito | TLS en todos los gRPC con una CA propia. | RNF6. Sin TLS, el cliente no conecta. |
+| Seguridad en tránsito | El overlay seguro usa TLS en gRPC, AMQP, JDBC y replicación SQL con CA local. | Plaintext rechazado en la demo segura; el modo base no cifra AMQP/SQL. La consola HTTP es administrativa y local. |
 | Seguridad en reposo | AES-256-GCM por bloque con IV aleatorio. La clave es la misma en todos los DataNodes (secret). | Cualquier nodo puede servir una réplica. GCM además detecta bloques alterados. |
 | Autenticación | Usuario y contraseña (PBKDF2), token de sesión Ed25519 y tokens por bloque. Los DataNodes solo tienen la clave pública. | Un DataNode no puede fabricar permisos. Ningún nodo guarda tokens. |
 | Entre nodos | Clave de registro del clúster y `node_token` en cada reporte y heartbeat. | Un proceso ajeno no puede registrarse ni reportar bloques. |
@@ -386,12 +413,12 @@ JOIN datanode d USING (datanode_id) WHERE f.status = 'COMMITTED' ORDER BY 1, 2, 
 
 **Limitaciones conocidas (trabajo futuro):**
 
-- RabbitMQ es un solo nodo y no usa TLS.
-- Un archivo PENDING abandonado en otro path ocupa espacio hasta que se suba otro en ese path
-  (falta un job de limpieza).
+- RabbitMQ sigue siendo un solo nodo, aunque el overlay seguro sí usa TLS.
+- Las cargas PENDING se limpian por TTL desde su creación, sin heartbeat: ajustar el TTL
+  para transferencias prolongadas. Se conservan tombstones y no hay GC certificado.
 - No hay mTLS, ACL por grupos, 2FA ni API keys.
 - No hay rebalanceo ni decommission.
-- `write()` parcial no existe: los archivos son WORM y se reemplazan con `rm` + `put`.
+- RF3 usa caché completa y publicación por versiones; no es escritura remota in-place ni POSIX.
 
 Los riesgos y criterios pendientes, incluidos los fallos del consumidor de borrados, las escrituras en vuelo y los reenvíos de
 bloques distintos, se mantienen en [ESTADO-DEL-PROYECTO.md](ESTADO-DEL-PROYECTO.md). No interpretar
@@ -403,7 +430,7 @@ esta descripción del diseño como evidencia de ejecución de los escenarios.
 
 - **¿Qué pasa si se cae un DataNode en medio de una subida?** El `WriteBlock` falla, y el cliente
   reintenta 3 veces y luego aborta. El archivo queda PENDING, invisible en `ls`. Un nuevo `put`
-  al mismo path lo descarta (`allocateFile`, paso 2).
+  al mismo path lo descarta (`allocateFile`, paso 2), o el trabajador lo expira tras el TTL.
 - **¿Y si se cae durante una descarga?** `readWithFailover` pasa a la siguiente copia del manifiesto.
 - **¿Cómo sabe el ControlNode que un nodo murió?** Porque no recibe heartbeats por RabbitMQ.
   `updateNodeStatus` lo pasa a SUSPECT a los 15 s y a DEAD a los 30 s.
@@ -423,12 +450,16 @@ esta descripción del diseño como evidencia de ejecución de los escenarios.
 - **¿Cómo se demuestra que está cifrado?** Con el escenario 5: un `grep` del texto original sobre
   los `.blk` no encuentra nada. `BlockStoreTest.enDiscoNoApareceElTextoOriginal` lo prueba
   también.
-- **¿Por qué gRPC y no REST?** Por el streaming bidireccional eficiente para bloques de 8 MiB, el
+- **¿Por qué gRPC y no REST?** Por el streaming de subida y de descarga para bloques de 8 MiB, el
   contrato tipado (`.proto`) y HTTP/2 con TLS.
 
 ---
 
 ## 7. Cómo correr y probar
+
+Procedimiento vigente seguro para Windows y evidencia: [DEMO-LOCAL.md](DEMO-LOCAL.md).
+No ejecutar los comandos de arranque siguientes sobre un proyecto cuyo standby ya se promovió.
+La base sola no cifra AMQP/SQL; para esa propiedad se necesita el overlay seguro.
 
 ```bash
 # Pruebas unitarias y jars; integración PostgreSQL según PRUEBAS.md

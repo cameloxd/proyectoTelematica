@@ -1,100 +1,99 @@
 # Estado vigente de DFSha
 
-Actualización: 2026-10-25, 23:55 America/Bogota. Alcance: outbox de borrados y demostración local básica en `chore/local-demo`.
+Actualización: 2026-10-26, America/Bogota. Rama de entrega: `feat/local-release-ready`.
+Este inventario distingue implementación, validación local y publicación: no es un certificado
+de producción ni una afirmación de que la rama ya esté integrada.
 
-La base integrada es el PR #10 (`develop`, `cb67cf0`), que consolida las cuatro correcciones/documentación sobre el PR #9. La outbox posterior está publicada en `fix/control-delete-outbox` (`ccd6966`) y aún requiere PR/revisión/integración propios. La preparación y correcciones de la demo viven en `chore/local-demo`. No confundir las ramas con los cambios ya integrados a develop.
+## Integración y revisión
 
-## Regla de trabajo: una capacidad, una implementación
+- PR #10 (`cb67cf0`): consolidación previa.
+- PR #11 (`7e098f4`): outbox y demo básica integradas a `develop`.
+- `08a9a61`: RF3 por versiones, inmutabilidad y limpieza de cargas pendientes.
+- `74c560b`: overlay TLS SQL/AMQP y demo aislada con carga/fallos; commit del recibo de ejecución.
+- Camilo confirmó el 26 de octubre la aprobación de esta nueva versión por Martín y el equipo.
+  La confirmación en conversación no equivale a una review registrada en GitHub.
+- La alineación `develop` -> `main` se hace mediante PR/merge normal, conservando ambas historias.
+  Verificar las referencias remotas y el diff final; no usar reset forzado ni force-push.
 
-Antes de crear una tarea, revisar este inventario y la [guía del código](GUIA-DEL-CODIGO.md). Si una capacidad existe, corregirla, probarla o documentarla en su módulo actual: no crear otra versión por integrante o fase.
+## Una capacidad, una implementación
 
-- La CLI solo traduce comandos; las operaciones del cliente viven en `DfsClient`.
-- Los metadatos y RPC de usuario viven en `ControlServiceImpl`; el registro/reporte de nodos, en `NodeRegistryImpl`.
-- La selección de destinos para primarias o nuevas réplicas utiliza `Placement`. Toda reserva primaria o de réplica usa el mismo candado `CapacityReservations`.
-- El escaneo y planificación de réplicas viven en `ClusterMonitor`; la copia física vive en `Replicator`.
-- El borrado lógico y las tareas se confirman juntos; `DeleteOutbox` reintenta su publicación usando `Rabbit.publishDelete`. No hay un segundo servicio de borrado ni cambios al contrato proto.
-- El almacenamiento y cifrado viven en `BlockStore`; `DataNodeServiceImpl` implementa el protocolo de bloques.
-- Tokens, gRPC y RabbitMQ se reutilizan desde `dfsha-common`.
-- `rm` y `rmdir` son comandos distintos que reutilizan el mismo RPC: no son implementaciones duplicadas. Cliente y replicador también reutilizan `ReadBlock` deliberadamente.
+La CLI traduce comandos a `DfsClient`. `ControlServiceImpl` mantiene los RPC de usuarios;
+`NodeRegistryImpl`, los reportes de nodos. `Placement` y `CapacityReservations` se reutilizan
+en primarias y réplicas. `ClusterMonitor` planifica; `Replicator` copia; `BlockStore` cifra,
+conserva inmutabilidad y tombstones. `DeleteOutbox` publica las tareas persistidas.
+No abrir implementaciones paralelas por fase o por integrante.
 
-Las ramas antiguas de C1.4 y de la primera integración de Mendel son referencias históricas, no funcionalidades que deban volver a mezclarse completas. Antes de reutilizar un cambio aislado, compararlo con el `develop` actual. No se borran ni se fuerzan esas ramas como parte de la limpieza.
+## Responsables de explicación y mantenimiento
 
-## Responsabilidades de mantenimiento
+- Camilo: esquema/migraciones, Tokens, Db, ControlServiceImpl, NodeRegistryImpl, Placement,
+  CapacityReservations, DeleteOutbox y planificación de réplicas.
+- Mendel: ClientMain, DfsClient, BlockStore, DataNodeServiceImpl, Replicator y DataNodeMain.
+- Martín: proto, gRPC/RabbitMQ, ControlLink, heartbeats/estados de ClusterMonitor e infraestructura.
 
-La responsabilidad es de revisión y explicación, no de autoría exclusiva de los commits. Cambiar un módulo existente no significa apropiarse del trabajo de otro integrante.
+Las responsabilidades no son autoría exclusiva. RF3 cruza cliente, contrato y ControlNode;
+modificar estas partes requiere revisión compartida.
 
-- Camilo: esquema/migraciones de metadatos, `Tokens`, `Db`, `ControlServiceImpl`, `NodeRegistryImpl`, `Placement`, `CapacityReservations`, `DeleteOutbox` y planificación de réplicas de `ClusterMonitor`.
-- Mendel: `ClientMain`, `DfsClient`, `BlockStore`, `DataNodeServiceImpl`, `Replicator` y ensamblaje de `DataNodeMain`.
-- Martín: contrato proto, utilidades gRPC/RabbitMQ, `ControlLink`, heartbeats/estados de `ClusterMonitor` e infraestructura.
+## Implementación actual
 
-`ClusterMonitor` es compartido por secciones; coordinar su modificación. Un cambio al contrato necesita acuerdo con Martín y adaptación de los consumidores, no un contrato paralelo.
+- C1: PostgreSQL, registro de nodos, login PBKDF2 y namespace por propietario.
+- C2: partición, asignación, reservas, idempotencia, reportes, commit y manifiestos.
+- C2.3: borrado lógico + outbox en una transacción; publicación reintentable al menos una vez.
+- Fase 3: replicación eventual, detección ALIVE/SUSPECT/DEAD, reposición y lecturas con failover.
+- Cliente/DataNode: put/get paralelos, checksum, FileChannel, tokens y AES-GCM.
+- RF3: instantáneas abiertas, read/write por offset en bytes, lease exclusivo y reemplazo atómico
+  al cerrar. No se modifica el bloque físico existente; cada versión utiliza UUID nuevos.
+- Cargas PENDING abandonadas: expiración periódica con tareas de borrado persistidas.
+- TLS de gRPC y, con overlay seguro, de AMQP/JDBC/replicación PostgreSQL con CA/hostname verificados.
 
-## Ya implementado: no volver a empezar
+## Evidencia Maven: 89 pruebas
 
-### Camilo
+El 26 de octubre la fase `package` terminó con cero fallos, errores y omisiones:
 
-- C1: persistencia PostgreSQL, registro de nodos, login y namespace. El diseño actual usa PBKDF2 y tokens Ed25519; no duplicar la autenticación con la implementación BCrypt anterior.
-- C2.1/C2.2: asignación por bloques, rondas y puntuación, reservas, idempotencia, reportes, confirmación y manifiestos. Las regresiones de concurrencia/namespace están corregidas e integradas por el PR #10.
-- C2.3: borrado lógico y tareas en una transacción PostgreSQL, con publicación diferida/reintentable por outbox en esta rama. La migración recupera también copias borradas por versiones anteriores. Falta demostrar la caída/recuperación con RabbitMQ real, el consumidor/DLQ y las escrituras tardías; no afirmar eliminación física garantizada.
-- Fase 3: colocación sin repetir nodo y factor de replicación configurable. Las reservas de réplicas ahora comparten el candado de las primarias. Shards/líderes eran una evaluación propuesta: documentar la decisión antes de añadir otra arquitectura.
+- common: 17 (rutas 2, publicación de borrados 4, configuración TLS AMQP 2, RPC 4, tokens 5).
+- controlnode: 55 (flujo PostgreSQL 27, versiones PostgreSQL 7, outbox PostgreSQL 13,
+  monitor PostgreSQL 2, contraseñas 2, colocación 4).
+- datanode: 11 de almacenamiento/cifrado, reenvío idéntico/distinto, tombstones y carreras.
+- client: 6 del ciclo de archivos abiertos con gRPC local y protocolo de servidor acotado.
 
-### Mendel
+Hay 49 casos con PostgreSQL real. Los tests del cliente no son un clúster real; AMQP simulado
+no demuestra RabbitMQ por sí solo. Se usó JDK 24/release 17, contrato v1.2 generado desde la
+PowerShell de Camilo y compilación con fuentes generadas verificadas; no se afirma un `clean`
+en el sandbox Windows. La generación nativa terminó BUILD SUCCESS. Ver [PRUEBAS.md](PRUEBAS.md).
 
-- Fase 1: CLI, bloques, SHA-256, FileChannel y DataNode. El fake anterior fue retirado al conectar servicios reales; no hace falta restaurarlo como una segunda aplicación.
-- Fase 2: llamadas reales al ControlNode, put/get paralelos, reintentos, manejo de bloques faltantes y tokens del DataNode.
-- Fase 3: lectura desde réplicas, failover, TLS configurable y cifrado AES-GCM. Las pruebas de carga y las pruebas automáticas del cliente siguen pendientes.
+## Evidencia distribuida local: aprobada
 
-### Martín e integración
+Proyecto `dfsha-demo-entrega-20261026`, resultado del 2026-10-26 01:16:13 -05:00,
+commit `74c560bccd3976be370954c4250008e06a46d917`. Recibo y logs sanitizados en
+[entrega/evidencia](entrega/evidencia/resultado.json).
 
-- Contrato v1.1, Bearer, canales gRPC, RabbitMQ, registro al arrancar, heartbeats y estados de nodos.
-- Escaneo de sub-replicación, tareas de copia, Compose con dos ControlNodes, cuatro DataNodes y PostgreSQL primario/standby.
-- Scripts de secretos, promoción manual y siete escenarios. Su existencia no demuestra que se hayan ejecutado satisfactoriamente.
+- Cuatro DataNodes ALIVE; put/get de 20 MiB en tres bloques con al menos tres copias vivas.
+- SHA-256 original/descarga: `D9BD7967570F3075F0ED345833B31C7436D3ACFD1F5109B232F0F5F6F809B247`.
+- RF3: escritor cambia a LISTO, lector ya abierto conserva DFSHA y nueva apertura ve la versión confirmada.
+- Borrado: outbox publicada y UUID ausentes de los cuatro discos.
+- Seguridad: SQL TLS verificado/plaintext rechazado, AMQP solo TLS, gRPC sin TLS rechazado,
+  aislamiento de usuarios y exclusión/expiración de locks.
+- Carga: cuatro clientes concurrentes de 20 MiB, cuatro checksums correctos; 160 MiB de
+  transferencia total en 47,868 s, 3,343 MiB/s agregados. Incluye login y borrado, no es ancho de banda puro.
+- Caída de un DataNode: lectura desde otra copia, detección DEAD y reposición del factor tres.
+- Caída de un ControlNode: lectura correcta usando el otro endpoint.
+- Caída del broker: borrado lógico, tarea pendiente observada y limpieza física tras recuperarlo.
+- PostgreSQL: WAL sincronizado antes de detener el primario, promoción manual y lectura correcta.
 
-## Evidencia de la consolidación integrada (PR #10)
+El standby de ESTE proyecto quedó promovido. NO reiniciar el primario antiguo ni ejecutar `up`
+en ese proyecto. La demo básica del 25 de octubre es evidencia histórica distinta, no se sobrescribe.
 
-La batería completa terminó con **51 pruebas aprobadas, cero fallos, cero errores y cero omitidas**:
+## Límites y cierre de entrega
 
-- common: 11 pruebas.
-- controlnode: 35 pruebas, de las cuales 29 usan PostgreSQL real (27 de flujo de archivos y dos de planificación de réplicas).
-- datanode: cinco pruebas de almacenamiento/cifrado, incluida la validación del UUID antes de crear temporales.
-- client compila, pero todavía no tiene pruebas propias.
-
-La segunda pasada, con la fase Maven `package` y la misma batería completa, también terminó en BUILD SUCCESS y generó los tres jars ejecutables de cliente, ControlNode y DataNode. Empaquetar no inició los servicios.
-
-Las dos pruebas nuevas del monitor comprueban reservas en nodos distintos, que otro escaneo no duplique el plan y que el escáner espere una reserva primaria antes de volver a calcular capacidad. No copian bloques por RabbitMQ ni demuestran replicación física.
-
-Se usó JDK 24 con `release 17`. En el entorno automatizado se reutilizaron las clases del contrato que Camilo ya había generado; antes se verificaron hash del proto y vigencia de las clases. No hubo cambios al contrato ni se afirma una generación limpia con protoc en ese entorno. Los temporales de almacenamiento se aislaron en el workspace; PostgreSQL de pruebas se detuvo al terminar.
-
-Comandos y límites: [PRUEBAS.md](PRUEBAS.md). El registro anterior de 44 pruebas solo cubría common/ControlNode; no era una validación de todos los módulos.
-
-## Evidencia local de borrados recuperables (posterior al PR #10)
-
-En `fix/control-delete-outbox`, la pasada final de Maven `package` aprobó **69 pruebas, cero fallos, cero errores y cero omitidas**: common 15, controlnode 48 y datanode 6. Son las 51 pruebas de base más 18 nuevas, no la suma de ejecuciones repetidas. Los 42 casos PostgreSQL son 27 de flujo, dos del monitor y 13 de la outbox. El cliente compila sin pruebas propias.
-
-Se verificó la transacción de borrado/tarea, rollback SQL, transporte fallido con espera persistida, recuperación mediante otra instancia del trabajador, reparto con filas bloqueadas, recuperación de borrados antiguos y reejecución segura de la migración. Un fallo SQL simulado después de la confirmación del transporte verifica que se puede reenviar, en lugar de perder una tarea. Otro caso inicia y detiene el trabajador programado; no equivale a matar/reiniciar procesos ControlNode reales.
-
-Los cuatro casos AMQP de esa batería usan un canal simulado (retorno sin ruta, timeout, nack y envío confirmado). El caso nuevo de almacenamiento comprueba un borrado duplicado con dos UUID distintos. En esa pasada Maven no se usó un broker real ni se ejecutó una eliminación distribuida; posteriormente sí se ejecutó la demo básica real descrita abajo.
-
-Se conserva el mismo límite de entorno: JDK 24/release 17 y contrato previamente generado/verificado, sin `clean` ni cambios al proto. Se generaron los tres jars y se detuvo el PostgreSQL temporal. La migración se ejecutó únicamente en esquemas aislados de prueba; no se aplicó a una base existente del proyecto. Hay reportes antiguos en `target`: el recuento anterior solo incluye las clases ejecutadas en esta pasada, no archivos históricos.
-
-## Demo básica local completada (23:55 America/Bogota)
-
-En Docker Desktop, proyecto `dfsha-demo-20261025233922`, se registraron cuatro DataNodes y se ejecutaron put/get de 20 MiB con SHA-256 idéntico, lectura parcial, lock/unlock y borrado. Los 20 MiB se dividieron en tres bloques, cada uno con al menos tres copias WRITTEN/ALIVE. Se comprobó publicación de las tareas de borrado y ausencia física de esos bloques en los cuatro DataNodes. Esto usa RabbitMQ y PostgreSQL reales, pero no demuestra recuperación ante caída del broker ni otros fallos.
-
-Se corrigió un CR final de los secretos generados en Windows: Java lo eliminaba y los scripts conservaban una contraseña distinta. Se sincronizaron únicamente los usuarios de aplicación del clúster existente; no se borraron volúmenes ni se promovió el standby. Detalle, hashes y ubicación del recibo: [DEMO-LOCAL.md](DEMO-LOCAL.md). El clúster quedó encendido. No hay despliegue en nube ni certificación completa.
-
-## Pendientes reales antes de cerrar el despliegue
-
-No confundir esta limpieza con una certificación de producción:
-
-- Ampliar la demo aprobada del cliente con fallos durante transferencias y pruebas automáticas propias; el put/get básico y el factor tres ya fueron comprobados localmente.
-- Ejecutar y conservar resultados de los siete escenarios en un clúster de pruebas autorizado; todavía no se ejecutaron en esta consolidación.
-- Revisar/integrar esta outbox y comprobar una caída/recuperación real de RabbitMQ. Resolver por separado los fallos del consumidor/DLQ y las escrituras/réplicas en vuelo que lleguen después de un borrado. La outbox confirma entrega al broker, no eliminación física.
-- Proteger la inmutabilidad ante reenvíos con datos distintos: `BlockStore.save` todavía puede reemplazar un bloque antes de que el ControlNode rechace el checksum.
-- Limpiar PENDING abandonados y las copias físicas de subidas reemplazadas.
-- Acordar RF3: existen read/cat y lock/unlock, pero no escritura parcial ni handles open/close de archivos. WORM es el alcance actual del cliente, no una garantía de inmutabilidad ya probada en todos los reintentos.
-- Documentar los límites de HA: promoción PostgreSQL manual, streaming asíncrono, RabbitMQ de un nodo, sin TLS AMQP/SQL configurado. No garantizar pérdida cero tras promover un standby.
-- Medir carga, revisar trazabilidad JSON/request_id y auditoría pendientes respecto al diseño anterior, y acordar decommission/rebalanceo.
-- Preparar evidencia de nube, informe y video; publicar/revisar las ramas antes de actualizar `develop`, y cerrar `main`/tags solo con aceptación del equipo.
-
-El siguiente paso es revisar e integrar la recuperación de publicación de borrados y preparar esas validaciones. Para una base existente se requiere la [migración incremental](../deploy/migrations/README.md): no borrar sus volúmenes.
+- El commit inicial no espera las tres réplicas: existe ventana de sub-replicación.
+- No hay HA del host ni clúster RabbitMQ; el broker vuelve a operar al recuperarse, no durante su caída.
+- Streaming PostgreSQL asíncrono: la prueba sincronizó WAL, no demuestra pérdida cero ante un fallo abrupto.
+- RF3 es una API con caché de archivo completo y lease de 600 s, sin renovación automática;
+  no es POSIX/FUSE ni escritura remota in-place. `exit` descarta handles sin cerrar.
+- DLQ requiere recuperación operativa; publicación confirmada no es acuse de borrado físico.
+- Tombstones se conservan; no hay GC certificado, rebalanceo ni decommission.
+- Clave AES compartida y CA local de demo: no es gestión de claves/certificados de producción.
+- AWS/GCP e Internet no se validaron, por exclusión expresa de Camilo. Siguen siendo exigencias
+  de la asignación, no una excepción confirmada por el profesor.
+- Informe y guion en `entrega/`. Un guion NO sustituye el video final de 10-15 minutos;
+  grabarlo, revisar su duración y adjuntarlo a la entrega.
+- Cerrar PR a develop, PR de entrega a main y tag solo tras comprobar sus resultados remotos.

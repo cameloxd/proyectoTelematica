@@ -5,7 +5,9 @@
 - [ESTADO-DEL-PROYECTO.md](ESTADO-DEL-PROYECTO.md): inventario funcional, responsables, evidencia y pendientes. Es la referencia para decidir qué desarrollar.
 - [GUIA-DEL-CODIGO.md](GUIA-DEL-CODIGO.md): explica la implementación actual y dónde modificar cada capacidad.
 - [PRUEBAS.md](PRUEBAS.md): comandos reproducibles y alcance de las pruebas.
-- [DEMO-LOCAL.md](DEMO-LOCAL.md): demostración local en Windows y evidencia requerida; el procedimiento no equivale a una ejecución aprobada.
+- [DEMO-LOCAL.md](DEMO-LOCAL.md): demo segura reproducible, evidencia aprobada y advertencia de promoción SQL.
+- [entrega/INFORME.md](entrega/INFORME.md): informe editable con arquitectura, protocolos y resultados.
+- [entrega/GUION-VIDEO.md](entrega/GUION-VIDEO.md): guion de 12 minutos y checklist del video que debe grabarse.
 - [CONTRIBUTING.md](../CONTRIBUTING.md): ramas, revisión y regla para evitar implementaciones paralelas.
 
 El contrato ejecutable está en [dfsha.proto](../dfsha-proto/src/main/proto/dfsha.proto); el esquema vigente es [deploy/schema.sql](../deploy/schema.sql) seguido de las [migraciones](../deploy/migrations/README.md). No copiarlos desde documentos antiguos.
