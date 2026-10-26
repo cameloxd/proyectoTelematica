@@ -55,4 +55,13 @@ class BlockStoreTest {
     assertThrows(IllegalArgumentException.class, () -> store().save("../../etc/passwd", new byte[1]));
     assertThrows(NoSuchFileException.class, () -> store().load(UUID.randomUUID().toString()));
   }
+
+  @Test
+  void unIdInvalidoNoDejaArchivosTemporales() throws Exception {
+    // Un id simple también debe rechazarse ANTES de crear un temporal dentro de la carpeta.
+    assertThrows(IllegalArgumentException.class, () -> store().save("no-es-un-uuid", new byte[10]));
+    try (var files = Files.list(dir)) {
+      assertEquals(0, files.count());
+    }
+  }
 }
