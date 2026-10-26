@@ -1,0 +1,24 @@
+# Overlay del Compose principal: mismos servicios y protocolo, solo cambia la imagen de la demo.
+x-demo-build: &demo-build
+  context: ./.demo/build
+  dockerfile: Dockerfile
+
+services:
+  controlnode1:
+    image: dfsha-local-demo:${DFSHA_DEMO_TAG:-dev}
+    build: *demo-build
+  controlnode2:
+    image: dfsha-local-demo:${DFSHA_DEMO_TAG:-dev}
+    build: *demo-build
+  datanode1:
+    image: dfsha-local-demo:${DFSHA_DEMO_TAG:-dev}
+    build: *demo-build
+  datanode2:
+    image: dfsha-local-demo:${DFSHA_DEMO_TAG:-dev}
+    build: *demo-build
+  datanode3:
+    image: dfsha-local-demo:${DFSHA_DEMO_TAG:-dev}
+    build: *demo-build
+  datanode4:
+    image: dfsha-local-demo:${DFSHA_DEMO_TAG:-dev}
+    build: *demo-build
